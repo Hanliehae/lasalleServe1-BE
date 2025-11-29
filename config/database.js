@@ -1,46 +1,63 @@
+// config/database.js - PERBAIKI VERSION
 const { Pool } = require('pg');
 require('dotenv').config();
 
-console.log('🔧 Configuring database connection...');
-console.log('Database:', process.env.DB_NAME);
-console.log('User:', process.env.DB_USER);
-console.log('Host:', process.env.DB_HOST);
+console.log('🔧 Database Configuration Check:');
+console.log('DB_USER:', process.env.DB_USER);
+console.log('DB_PASSWORD type:', typeof process.env.DB_PASSWORD);
+console.log('DB_PASSWORD length:', process.env.DB_PASSWORD ? process.env.DB_PASSWORD.length : 'NULL');
+
+// Pastikan password adalah string yang valid
+const dbPassword = process.env.DB_PASSWORD || '';
+if (typeof dbPassword !== 'string') {
+  console.error('❌ ERROR: DB_PASSWORD is not a string!');
+  process.exit(1);
+}
 
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
+  user: process.env.DB_USER || 'lasalle_user',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'lasalleserve',
+  password: dbPassword, // Gunakan variable yang sudah divalidasi
+  port: parseInt(process.env.DB_PORT) || 5432,
+  ssl: false, // TAMBAHKAN untuk development
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
 });
 
-// Test connection function
+// Test connection dengan error handling yang lebih baik
 const testConnection = async () => {
+  let client;
   try {
-    const client = await pool.connect();
-    console.log('✅ BERHASIL terhubung ke Database LasalleServe!');
-    
-    // Test query
+    client = await pool.connect();
     const result = await client.query('SELECT version()');
+    console.log('✅ BERHASIL terhubung ke Database LasalleServe!');
     console.log('📊 PostgreSQL Version:', result.rows[0].version);
     
-    client.release();
+    // Test query tambahan untuk memastikan tables ada
+    const tablesResult = await client.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+    `);
+    console.log('📋 Tables found:', tablesResult.rows.map(row => row.table_name));
+    
     return true;
   } catch (error) {
-    console.error('❌ GAGAL terhubung ke database:');
-    console.error('   Error:', error.message);
-    console.error('');
-    console.error('🔧 TROUBLESHOOTING:');
-    console.error('   1. Pastikan PostgreSQL sedang berjalan');
-    console.error('   2. Cek konfigurasi di file .env');
-    console.error('   3. Test koneksi manual: psql -U lasalle_user -d lasalleserve');
-    console.error('   4. Pastikan password benar');
+    console.error('❌ GAGAL terhubung ke database:', error.message);
+    console.error('Error details:', error);
     return false;
+  } finally {
+    if (client) client.release();
   }
 };
 
+const query = (text, params) => pool.query(text, params);
+const getClient = () => pool.connect();
+
 module.exports = {
-  query: (text, params) => pool.query(text, params),
-  pool,
-  testConnection
+  query,
+  getClient,
+  testConnection,
+  pool
 };

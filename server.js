@@ -1,6 +1,5 @@
 // server.js - FIXED VERSION
 const Hapi = require('@hapi/hapi');
-const { testConnection } = require('./config/database');
 require('dotenv').config();
 
 const init = async () => {
@@ -8,11 +7,12 @@ const init = async () => {
   
   // Test database connection first
   console.log('🔍 Testing database connection...');
+  const { testConnection } = require('./config/database');
   const dbConnected = await testConnection();
   
   if (!dbConnected) {
-    console.log('❌ Server dihentikan karena database tidak terhubung');
-    process.exit(1);
+    console.log('⚠️  Continuing without database connection for testing...');
+    // Jangan exit, lanjutkan untuk testing routes
   }
 
   const PORT = process.env.PORT || 3001;
@@ -29,6 +29,15 @@ const init = async () => {
     }
   });
 
+  // Register routes
+  try {
+    const routes = require('./routes');
+    server.route(routes);
+    console.log('✅ Routes registered successfully');
+  } catch (error) {
+    console.error('❌ Error registering routes:', error.message);
+  }
+
   // Basic route untuk test
   server.route({
     method: 'GET',
@@ -37,7 +46,7 @@ const init = async () => {
       return {
         status: 'success',
         message: '🚀 LasalleServe Backend API is running!',
-        database: 'PostgreSQL ✅',
+        database: dbConnected ? 'PostgreSQL ✅' : 'PostgreSQL ❌ (Test Mode)',
         timestamp: new Date().toISOString(),
         port: PORT
       };
@@ -60,43 +69,17 @@ const init = async () => {
             status: 'connected ✅',
             current_time: result.rows[0].current_time
           },
-          server_time: new Date().toISOString(),
-          port: PORT
+          server_time: new Date().toISOString()
         };
       } catch (error) {
-        return {
-          status: 'error',
-          message: '❌ Server has issues',
-          error: error.message
-        };
-      }
-    }
-  });
-
-  // Database test route
-  server.route({
-    method: 'GET',
-    path: '/test-db',
-    handler: async (request, h) => {
-      const { query } = require('./config/database');
-      
-      try {
-        const result = await query('SELECT version() as postgres_version');
         return {
           status: 'success',
-          message: '✅ Database connection successful!',
+          message: '⚠️ Server running in test mode',
           database: {
-            name: process.env.DB_NAME,
-            version: result.rows[0].postgres_version,
-            status: 'active ✅'
+            status: 'disconnected ❌',
+            error: error.message
           },
-          port: PORT
-        };
-      } catch (error) {
-        return {
-          status: 'error',
-          message: '❌ Database connection failed!',
-          error: error.message
+          server_time: new Date().toISOString()
         };
       }
     }
@@ -109,23 +92,11 @@ const init = async () => {
     console.log('\n📚 Endpoints yang tersedia:');
     console.log('   ✅ GET  /          - Main API');
     console.log('   ✅ GET  /health    - Health check');
-    console.log('   ✅ GET  /test-db   - Test database');
-    console.log('\n🌐 Test di browser:');
-    console.log('   ', server.info.uri);
-    console.log('   ', server.info.uri + '/health');
-    console.log('   ', server.info.uri + '/test-db');
+    console.log('   ✅ POST /api/auth/register - Register user');
+    console.log('   ✅ POST /api/auth/login    - Login user');
+    console.log('   ✅ GET  /api/assets        - Get assets');
   } catch (error) {
-    if (error.code === 'EADDRINUSE') {
-      console.error('\n❌ PORT SUDAH DIGUNAKAN!');
-      console.error(`   Port ${PORT} sedang digunakan oleh aplikasi lain.`);
-      console.error('\n🔧 SOLUSI:');
-      console.error('   1. Ganti PORT di file .env menjadi 3002, 3003, dll.');
-      console.error('   2. Atau kill process yang menggunakan port tersebut:');
-      console.error('      netstat -ano | findstr :' + PORT);
-      console.error('      taskkill /PID <PID_NUMBER> /F');
-    } else {
-      console.error('❌ Gagal menjalankan server:', error.message);
-    }
+    console.error('❌ Gagal menjalankan server:', error);
     process.exit(1);
   }
 };

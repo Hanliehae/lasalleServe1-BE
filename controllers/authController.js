@@ -135,21 +135,17 @@ class AuthController {
     }
   }
 
-  static async logout(request, h) {
-    // In a real application, you might want to blacklist the token
-    return h.response({
-      status: 'success',
-      message: 'Logout berhasil'
-    });
-  }
-
   static async getProfile(request, h) {
-    const userId = request.auth.credentials.user.id;
-
     try {
+      // User sudah tersedia dari auth middleware
+      const user = request.auth.credentials.user;
+      
+      // Ambil data terbaru dari database (opsional, jika ingin data terbaru)
       const result = await query(
-        'SELECT id, name, email, role, department, student_id, phone, ktm_url, created_at FROM users WHERE id = $1',
-        [userId]
+        `SELECT id, email, role, name, department, student_id as "studentId", 
+                phone, is_active as "isActive", created_at as "createdAt"
+         FROM users WHERE id = $1`,
+        [user.id]
       );
 
       if (result.rows.length === 0) {
@@ -159,21 +155,10 @@ class AuthController {
         }).code(404);
       }
 
-      const user = result.rows[0];
-
       return h.response({
         status: 'success',
         data: {
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            department: user.department,
-            studentId: user.student_id,
-            phone: user.phone,
-            ktmUrl: user.ktm_url
-          }
+          user: result.rows[0]
         }
       });
     } catch (error) {
@@ -183,6 +168,13 @@ class AuthController {
         message: 'Terjadi kesalahan server'
       }).code(500);
     }
+  }
+  static async logout(request, h) {
+    // Untuk JWT, logout handled di client side dengan menghapus token
+    return h.response({
+      status: 'success',
+      message: 'Logout berhasil'
+    });
   }
 }
 

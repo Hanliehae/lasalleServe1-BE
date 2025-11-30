@@ -1,20 +1,16 @@
-// routes/index.js - SIMPLIFIED VERSION
+// routes/index.js
 const authRoutes = require('./authRoutes');
 const assetRoutes = require('./assetRoutes');
 const loanRoutes = require('./loansRoutes');
-
-// Untuk sementara, comment yang belum ada
-// const reportRoutes = require('./reports');
-// const returnRoutes = require('./returns');
-// const dashboardRoutes = require('./dashboard');
+const dashboardRoutes = require('./dashboardRoutes');
+const reportRoutes = require('./reportsRoutes');
 
 const routes = [].concat(
   authRoutes,
   assetRoutes, 
-  loanRoutes
-  // reportRoutes,
-  // returnRoutes,
-  // dashboardRoutes
+  loanRoutes,
+  dashboardRoutes,
+  reportRoutes
 );
 
 console.log('🔄 Registered routes:');

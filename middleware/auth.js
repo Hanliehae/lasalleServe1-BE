@@ -1,24 +1,28 @@
+// middleware/auth.js - COMPATIBLE WITH @hapi/jwt v3
 const { query } = require('../config/database');
+const { verifyToken } = require('../utils/jwt');
 
 const authenticateJWT = async (artifacts, request, h) => {
-  const { id, email } = artifacts.decoded.payload;
-  
   try {
-    // Cek apakah user masih ada dan aktif
+    const decoded = artifacts.decoded;
+    const userId = decoded.payload.id;
+    
+    // Cek user di database
     const result = await query(
-      'SELECT id, email, role, name FROM users WHERE id = $1 AND is_active = true',
-      [id]
+      'SELECT id, email, role, name, is_active FROM users WHERE id = $1 AND is_active = true',
+      [userId]
     );
 
     if (result.rows.length === 0) {
       return { isValid: false };
     }
 
-    const user = result.rows[0];
-
     return {
       isValid: true,
-      credentials: { user }
+      credentials: { 
+        user: result.rows[0],
+        scope: result.rows[0].role 
+      }
     };
   } catch (error) {
     console.error('Auth error:', error);

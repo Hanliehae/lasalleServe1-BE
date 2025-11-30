@@ -166,75 +166,79 @@ class LoanController {
 
 
 static async createLoan(request, h) {
-  const { query } = require('../config/database'); // TAMBAHKAN ini
-  const client = await query.getClient(); // ATAU sesuaikan dengan connection pool Anda
-  
-  try {
-    await client.query('BEGIN');
+    const client = await getClient(); // GUNAKAN getClient dari database
+    
+    try {
+      await client.query('BEGIN');
 
-    const {
-      roomId,
-      facilities,
-      startDate,
-      endDate,
-      startTime,
-      endTime,
-      purpose,
-      academicYear,
-      semester
-    } = request.payload;
+      const {
+        roomId,
+        facilities,
+        startDate,
+        endDate,
+        startTime,
+        endTime,
+        purpose,
+        academicYear,
+        semester
+      } = request.payload;
 
-    const borrowerId = request.auth.credentials.user.id;
+      const borrowerId = request.auth.credentials.user.id;
 
-    // Insert loan
-    const loanResult = await client.query(
-      `INSERT INTO loans (borrower_id, room_id, purpose, start_date, end_date, start_time, end_time, status, academic_year, semester)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id`,
-      [borrowerId, roomId, purpose, startDate, endDate, startTime, endTime, 'menunggu', academicYear, semester]
-    );
+      // Gunakan academicYear dari payload atau generate otomatis
+      const finalAcademicYear = academicYear || getAcademicYear();
+      const finalSemester = semester || getSemesterFromDate();
 
-    const loanId = loanResult.rows[0].id;
+      // Insert loan
+      const loanResult = await client.query(
+        `INSERT INTO loans (borrower_id, room_id, purpose, start_date, end_date, start_time, end_time, status, academic_year, semester)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [borrowerId, roomId, purpose, startDate, endDate, startTime, endTime, 'menunggu', finalAcademicYear, finalSemester]
+      );
 
-    // Insert loan items (facilities)
-    if (facilities && facilities.length > 0) {
-      for (const facility of facilities) {
-        await client.query(
-          'INSERT INTO loan_items (loan_id, asset_id, quantity) VALUES ($1, $2, $3)',
-          [loanId, facility.id, facility.quantity]
-        );
+      const loanId = loanResult.rows[0].id;
 
-        // Kurangi stok yang tersedia
-        await client.query(
-          'UPDATE assets SET available_stock = available_stock - $1 WHERE id = $2',
-          [facility.quantity, facility.id]
-        );
-      }
-    }
+      // Insert loan items (facilities)
+      if (facilities && facilities.length > 0) {
+        for (const facility of facilities) {
+          await client.query(
+            'INSERT INTO loan_items (loan_id, asset_id, quantity) VALUES ($1, $2, $3)',
+            [loanId, facility.id, facility.quantity]
+          );
 
-    await client.query('COMMIT');
-
-    // Kembalikan response langsung
-    return h.response({
-      status: 'success',
-      data: {
-        loan: {
-          id: loanId,
-          message: 'Loan created successfully'
+          // Kurangi stok yang tersedia
+          await client.query(
+            'UPDATE assets SET available_stock = available_stock - $1 WHERE id = $2',
+            [facility.quantity, facility.id]
+          );
         }
       }
-    }).code(201);
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Create loan error:', error);
-    return h.response({
-      status: 'error',
-      message: 'Terjadi kesalahan server'
-    }).code(500);
-  } finally {
-    client.release();
+
+      await client.query('COMMIT');
+
+      // Kembalikan response sederhana dulu
+      return h.response({
+        status: 'success',
+        data: {
+          loan: {
+            id: loanId,
+            message: 'Loan created successfully'
+          }
+        }
+      }).code(201);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Create loan error:', error);
+      return h.response({
+        status: 'error',
+        message: 'Terjadi kesalahan server: ' + error.message
+      }).code(500);
+    } finally {
+      client.release();
+    }
   }
-}
+
 
   static async updateLoanStatus(request, h) {
     try {

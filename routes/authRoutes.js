@@ -13,7 +13,7 @@ const authRoutes = [
           name: Joi.string().required(),
           email: Joi.string().email().required(),
           password: Joi.string().min(6).required(),
-          role: Joi.string().valid('mahasiswa', 'dosen', 'staf', 'civitas').required(),
+          role: Joi.string().valid('mahasiswa', 'dosen', 'staf', 'civitas', 'staf_buf', 'admin_buf', 'kepala_buf').required(),
           department: Joi.string().allow('').optional(),
           studentId: Joi.string().allow('').optional(), // Ubah menjadi optional
           phone: Joi.string().allow('').optional(),
@@ -40,6 +40,7 @@ const authRoutes = [
   {
     method: 'POST',
     path: '/api/auth/logout',
+    options: { auth: false },
     handler: AuthController.logout
   },
   {

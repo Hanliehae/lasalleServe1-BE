@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, getClient } = require('../config/database');
 const { getAcademicYear, getSemesterFromDate } = require('../utils/academicYear');
 
 class LoanController {
@@ -165,10 +165,10 @@ class LoanController {
   }
 
 
-static async createLoan(request, h) {
-    const client = await getClient(); // GUNAKAN getClient dari database
-    
+ static async createLoan(request, h) {
+    let client;
     try {
+      client = await getClient(); // SEKARANG HARUSNYA BERFUNGSI
       await client.query('BEGIN');
 
       const {
@@ -185,6 +185,21 @@ static async createLoan(request, h) {
 
       const borrowerId = request.auth.credentials.user.id;
 
+      console.log('🔐 Create Loan - User:', borrowerId);
+      console.log('📦 Payload facilities:', facilities);
+
+      // Validasi required fields
+      if (!facilities || facilities.length === 0) {
+        throw new Error('Minimal satu fasilitas harus dipilih');
+      }
+
+      // Validasi asset ID
+      for (const facility of facilities) {
+        if (!facility.id || facility.id === '{{assetId}}') {
+          throw new Error('Asset ID tidak valid. Pastikan menggunakan ID yang benar tanpa {{}}');
+        }
+      }
+
       // Gunakan academicYear dari payload atau generate otomatis
       const finalAcademicYear = academicYear || getAcademicYear();
       const finalSemester = semester || getSemesterFromDate();
@@ -198,44 +213,63 @@ static async createLoan(request, h) {
       );
 
       const loanId = loanResult.rows[0].id;
+      console.log('✅ Loan created with ID:', loanId);
 
-      // Insert loan items (facilities)
-      if (facilities && facilities.length > 0) {
-        for (const facility of facilities) {
-          await client.query(
-            'INSERT INTO loan_items (loan_id, asset_id, quantity) VALUES ($1, $2, $3)',
-            [loanId, facility.id, facility.quantity]
-          );
+      // Process facilities
+      for (const facility of facilities) {
+        console.log(`🔄 Processing facility: ${facility.id}`);
+        
+        // Check if asset exists and has enough stock
+        const assetResult = await client.query(
+          'SELECT name, available_stock FROM assets WHERE id = $1',
+          [facility.id]
+        );
 
-          // Kurangi stok yang tersedia
-          await client.query(
-            'UPDATE assets SET available_stock = available_stock - $1 WHERE id = $2',
-            [facility.quantity, facility.id]
-          );
+        if (assetResult.rows.length === 0) {
+          throw new Error(`Asset dengan ID ${facility.id} tidak ditemukan`);
         }
+
+        const asset = assetResult.rows[0];
+        if (asset.available_stock < facility.quantity) {
+          throw new Error(`Stok ${asset.name} tidak mencukupi. Tersedia: ${asset.available_stock}, Diminta: ${facility.quantity}`);
+        }
+
+        // Insert loan item
+        await client.query(
+          'INSERT INTO loan_items (loan_id, asset_id, quantity) VALUES ($1, $2, $3)',
+          [loanId, facility.id, facility.quantity]
+        );
+
+        // Update stock
+        await client.query(
+          'UPDATE assets SET available_stock = available_stock - $1 WHERE id = $2',
+          [facility.quantity, facility.id]
+        );
+
+        console.log(`✅ Facility ${asset.name} added to loan`);
       }
 
       await client.query('COMMIT');
 
-      // Kembalikan response sederhana dulu
       return h.response({
         status: 'success',
         data: {
           loan: {
             id: loanId,
-            message: 'Loan created successfully'
+            message: 'Peminjaman berhasil dibuat'
           }
         }
       }).code(201);
+
     } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Create loan error:', error);
+      if (client) await client.query('ROLLBACK');
+      console.error('❌ Create loan error:', error);
       return h.response({
         status: 'error',
-        message: 'Terjadi kesalahan server: ' + error.message
+        message: error.message
       }).code(500);
     } finally {
-      client.release();
+      if (client) client.release();
     }
   }
 
@@ -270,9 +304,37 @@ static async createLoan(request, h) {
     }
   }
 
-  static async deleteLoan(request, h) {
-    // Implementasi delete loan
-    // ... (serupa dengan yang lain)
+static async deleteLoan(request, h) {
+    try {
+      const { id } = request.params;
+
+      console.log(`🗑️ Deleting loan: ${id}`);
+
+      const result = await query(
+        'DELETE FROM loans WHERE id = $1 RETURNING id',
+        [id]
+      );
+
+      if (result.rows.length === 0) {
+        return h.response({
+          status: 'error',
+          message: 'Peminjaman tidak ditemukan'
+        }).code(404);
+      }
+
+      console.log('✅ Loan deleted successfully');
+
+      return h.response({
+        status: 'success',
+        message: 'Peminjaman berhasil dihapus'
+      });
+    } catch (error) {
+      console.error('❌ Delete loan error:', error);
+      return h.response({
+        status: 'error',
+        message: 'Terjadi kesalahan server'
+      }).code(500);
+    }
   }
 }
 

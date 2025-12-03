@@ -34,7 +34,34 @@ const assetRoutes = [
     },
     handler: AssetController.createAsset
   },
-  // ... tambahkan method PUT dan DELETE sesuai kebutuhan
+ {
+    method: 'PUT',
+    path: '/api/assets/{id}',
+    options: {
+      pre: [{ method: checkRole(['admin_buf']) }],
+      validate: {
+        payload: Joi.object({
+          name: Joi.string().required(),
+          category: Joi.string().valid('ruangan', 'fasilitas').required(),
+          location: Joi.string().required(),
+          totalStock: Joi.number().integer().min(0).required(),
+          availableStock: Joi.number().integer().min(0).required(),
+          condition: Joi.string().valid('baik', 'rusak_ringan', 'rusak_berat').required(),
+          description: Joi.string().allow(''),
+          acquisitionYear: Joi.string().allow('')
+        })
+      }
+    },
+    handler: AssetController.updateAsset
+  },
+  {
+    method: 'DELETE',
+    path: '/api/assets/{id}',
+    options: {
+      pre: [{ method: checkRole(['admin_buf']) }]
+    },
+    handler: AssetController.deleteAsset
+  }
 ];
 
 module.exports = assetRoutes;

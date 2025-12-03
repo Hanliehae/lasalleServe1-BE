@@ -1,3 +1,4 @@
+// routes/loansRoutes.js
 const Joi = require('joi');
 const LoanController = require('../controllers/loanController');
 const { checkRole } = require('../middleware/auth');
@@ -25,7 +26,7 @@ const loanRoutes = [
               id: Joi.string().required(),
               quantity: Joi.number().integer().min(1).required()
             })
-          ),
+          ).min(1).required(),
           startDate: Joi.date().required(),
           endDate: Joi.date().required(),
           startTime: Joi.string().allow(''),

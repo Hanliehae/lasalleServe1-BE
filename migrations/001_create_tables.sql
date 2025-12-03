@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS damage_reports (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for performance
+-- Create indexes for perfrmance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_assets_category ON assets(category);
@@ -126,3 +126,17 @@ DO $$
 BEGIN
     RAISE NOTICE '✅ LasalleServe database schema created successfully!';
 END $$;
+
+-- Pastikan kolom berikut ada di tabel loans
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS return_notes TEXT;
+
+-- Pastikan kolom berikut ada di tabel loan_items
+ALTER TABLE loan_items ADD COLUMN IF NOT EXISTS returned_condition VARCHAR(50);
+
+-- Pastikan kolom berikut ada di tabel assets
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS acquisition_year VARCHAR(9);
+
+-- Pastikan kolom berikut ada di tabel damage_reports
+ALTER TABLE damage_reports ADD COLUMN IF NOT EXISTS academic_year VARCHAR(9);
+ALTER TABLE damage_reports ADD COLUMN IF NOT EXISTS semester VARCHAR(10);

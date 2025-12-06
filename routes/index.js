@@ -5,7 +5,8 @@ const loanRoutes = require('./loansRoutes');
 const dashboardRoutes = require('./dashboardRoutes');
 const reportRoutes = require('./reportsRoutes');
 const returnRoutes = require('./returnRoutes');
-const exportRoutes = require('./exportRoutes'); // ✅ Tambahkan ini
+const exportRoutes = require('./exportRoutes'); 
+const uploadRoutes = require('./uploadRoutes');
 
 const routes = [].concat(
   authRoutes,
@@ -14,7 +15,8 @@ const routes = [].concat(
   dashboardRoutes,
   reportRoutes,
   returnRoutes,
-  exportRoutes // ✅ Tambahkan ini
+  exportRoutes,
+  uploadRoutes 
 );
 
 console.log('🔄 Registered routes:');

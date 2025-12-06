@@ -15,7 +15,7 @@ const assetRoutes = [
     handler: AssetController.getAssetById
   },
   {
-    method: 'POST',
+ method: 'POST',
     path: '/api/assets',
     options: {
       pre: [{ method: checkRole(['admin_buf']) }],
@@ -24,9 +24,12 @@ const assetRoutes = [
           name: Joi.string().required(),
           category: Joi.string().valid('ruangan', 'fasilitas').required(),
           location: Joi.string().required(),
-          totalStock: Joi.number().integer().min(0).required(),
-          availableStock: Joi.number().integer().min(0).required(),
-          condition: Joi.string().valid('baik', 'rusak_ringan', 'rusak_berat').required(),
+          conditions: Joi.array().items(
+            Joi.object({
+              condition: Joi.string().valid('baik', 'rusak_ringan', 'rusak_berat').required(),
+              quantity: Joi.number().integer().min(0).required()
+            })
+          ).required(),
           description: Joi.string().allow(''),
           acquisitionYear: Joi.string().allow('')
         })
@@ -35,8 +38,8 @@ const assetRoutes = [
     handler: AssetController.createAsset
   },
  {
-    method: 'PUT',
-    path: '/api/assets/{id}',
+   method: 'POST',
+    path: '/api/assets',
     options: {
       pre: [{ method: checkRole(['admin_buf']) }],
       validate: {
@@ -44,15 +47,18 @@ const assetRoutes = [
           name: Joi.string().required(),
           category: Joi.string().valid('ruangan', 'fasilitas').required(),
           location: Joi.string().required(),
-          totalStock: Joi.number().integer().min(0).required(),
-          availableStock: Joi.number().integer().min(0).required(),
-          condition: Joi.string().valid('baik', 'rusak_ringan', 'rusak_berat').required(),
+          conditions: Joi.array().items(
+            Joi.object({
+              condition: Joi.string().valid('baik', 'rusak_ringan', 'rusak_berat').required(),
+              quantity: Joi.number().integer().min(0).required()
+            })
+          ).required(),
           description: Joi.string().allow(''),
           acquisitionYear: Joi.string().allow('')
         })
       }
     },
-    handler: AssetController.updateAsset
+    handler: AssetController.createAsset
   },
   {
     method: 'DELETE',

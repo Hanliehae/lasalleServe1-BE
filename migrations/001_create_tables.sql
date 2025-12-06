@@ -140,3 +140,7 @@ ALTER TABLE assets ADD COLUMN IF NOT EXISTS acquisition_year VARCHAR(9);
 -- Pastikan kolom berikut ada di tabel damage_reports
 ALTER TABLE damage_reports ADD COLUMN IF NOT EXISTS academic_year VARCHAR(9);
 ALTER TABLE damage_reports ADD COLUMN IF NOT EXISTS semester VARCHAR(10);
+
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS stock_baik INTEGER DEFAULT 0;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS stock_rusak_ringan INTEGER DEFAULT 0;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS stock_rusak_berat INTEGER DEFAULT 0;

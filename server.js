@@ -1,7 +1,8 @@
-// server.js - UPDATE bagian auth strategy
+// server.js - PERBAIKAN COMPLETE
 const Hapi = require('@hapi/hapi');
 const HapiJwt = require('@hapi/jwt');
 require('dotenv').config();
+const { startCronJobs } = require('./utils/cron');
 
 const init = async () => {
   console.log('🔄 Starting LasalleServe Backend...');
@@ -24,7 +25,7 @@ const init = async () => {
     host: 'localhost',
     routes: {
       cors: {
-        origin: ['http://localhost:3000', 'http://localhost:5173'], // Tambahkan frontend port
+        origin: ['http://localhost:3000', 'http://localhost:5173'],
         credentials: true
       },
       validate: {
@@ -51,7 +52,7 @@ const init = async () => {
       sub: false,
       nbf: false,
       exp: true,
-      maxAgeSec: 14400, // 4 hours
+      maxAgeSec: 14400,
       timeSkewSec: 15
     },
     validate: async (artifacts, request, h) => {
@@ -208,15 +209,27 @@ const init = async () => {
     console.log('   ✅ POST /api/assets          - Create asset');
     console.log('\n🔑 Token testing user: admin@buf.ac.id');
     
+    // ✅ Start cron jobs setelah server running
+    startCronJobs();
+    
+    return server; // ✅ Kembalikan server instance
+    
   } catch (error) {
     console.error('❌ Gagal menjalankan server:', error);
     process.exit(1);
   }
 };
 
+// Handler untuk unhandled rejections
 process.on('unhandledRejection', (err) => {
   console.error('❌ Unhandled rejection:', err);
   process.exit(1);
 });
 
-init();
+// Jalankan server
+init().then(server => {
+  console.log(`✅ Server berjalan di ${server.info.uri}`);
+}).catch(err => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
+});

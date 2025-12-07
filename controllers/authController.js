@@ -80,60 +80,110 @@ class AuthController {
 
 
   static async login(request, h) {
-    const { email, password } = request.payload;
+  console.log('🔐 Login attempt:', request.payload);
+  
+  const { email, password } = request.payload;
 
-    try {
-      // Find user
-      const result = await query(
-        'SELECT * FROM users WHERE email = $1 AND is_active = true',
-        [email]
-      );
+  try {
+    // Find user
+    console.log('🔍 Searching for user:', email);
+    const result = await query(
+      'SELECT * FROM users WHERE email = $1',
+      [email]
+    );
 
-      if (result.rows.length === 0) {
-        return h.response({
-          status: 'error',
-          message: 'Email atau password salah'
-        }).code(401);
-      }
+    console.log('📋 User found:', result.rows.length > 0 ? 'Yes' : 'No');
+    
+    if (result.rows.length === 0) {
+      console.log('❌ User not found:', email);
+      return h.response({
+        status: 'error',
+        message: 'Email atau password salah'
+      }).code(401);
+    }
 
-      const user = result.rows[0];
+    const user = result.rows[0];
+    console.log('👤 User data:', {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      hasPassword: !!user.password,
+      passwordLength: user.password ? user.password.length : 0
+    });
 
-      // Verify password
+    // Jika password adalah default hash, kita perlu reset
+    const defaultHash = '$2b$10$6Y./.sCjW5z7V7g8H9qZ0e1X2y3z4A5B6C7D8E9F0G1H2I3J4K5L6M7N8O9P0';
+    if (user.password === defaultHash) {
+      console.log('⚠️  User has default password hash');
+      
+      // Verifikasi password dengan default
       const isValidPassword = await bcrypt.compare(password, user.password);
+      console.log('🔐 Password verification with default hash:', isValidPassword);
+      
+      if (!isValidPassword) {
+        // Update password dengan hash baru
+        console.log('🔄 Updating user password with new hash...');
+        const newHash = await bcrypt.hash(password, 10);
+        await query(
+          'UPDATE users SET password = $1 WHERE id = $2',
+          [newHash, user.id]
+        );
+        
+        // Update user object dengan password baru
+        user.password = newHash;
+        console.log('✅ Password updated with new hash');
+      }
+    } else {
+      // Verify password normal
+      console.log('🔐 Verifying password...');
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      console.log('✅ Password valid:', isValidPassword);
+      
       if (!isValidPassword) {
         return h.response({
           status: 'error',
           message: 'Email atau password salah'
         }).code(401);
       }
+    }
 
-      // Generate token
-      const token = generateToken(user);
-
-      return h.response({
-        status: 'success',
-        data: {
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            department: user.department,
-            studentId: user.student_id,
-            phone: user.phone,
-            ktmUrl: user.ktm_url
-          },
-          token
-        }
-      });
-    } catch (error) {
-      console.error('Login error:', error);
+    // Check if user is active
+    if (user.is_active === false) {
       return h.response({
         status: 'error',
-        message: 'Terjadi kesalahan server'
-      }).code(500);
+        message: 'Akun tidak aktif'
+      }).code(401);
     }
+
+    // Generate token
+    const token = generateToken(user);
+    console.log('✅ Login successful for:', user.email);
+
+    return h.response({
+      status: 'success',
+      data: {
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          department: user.department,
+          studentId: user.student_id,
+          phone: user.phone,
+          ktmUrl: user.ktm_url
+        },
+        token
+      }
+    });
+  } catch (error) {
+    console.error('❌ Login error:', error);
+    return h.response({
+      status: 'error',
+      message: 'Terjadi kesalahan server: ' + error.message
+    }).code(500);
   }
+}
 
   static async getProfile(request, h) {
     try {

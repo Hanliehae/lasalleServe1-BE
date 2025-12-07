@@ -166,69 +166,113 @@ class ReturnController {
     }
   }
 
-  static async getPendingReturns(request, h) {
-    try {
-      const user = request.auth.credentials.user;
+// controllers/returnController.js - TAMBAHKAN LOGGING
+static async getPendingReturns(request, h) {
+  const client = await getClient();
+  
+  try {
+    console.log('🔄 [ReturnController] Starting getPendingReturns...');
+    await client.query('BEGIN');
 
-      let sql = `
-        SELECT 
-          l.id,
-          l.borrower_id as "borrowerId",
-          u.name as "borrowerName",
-          u.email as "borrowerEmail",
-          l.room_id as "roomId",
-          a_room.name as "roomName",
-          l.start_date as "startDate",
-          l.end_date as "endDate",
-          l.start_time as "startTime",
-          l.end_time as "endTime",
-          l.status,
-          l.academic_year as "academicYear",
-          l.semester,
-          l.purpose,
-          COALESCE(
-            json_agg(
-              json_build_object(
-                'id', li.asset_id,
-                'name', a.name,
-                'quantity', li.quantity
-              )
-            ) FILTER (WHERE li.asset_id IS NOT NULL),
-            '[]'
-          ) as facilities
-        FROM loans l
-        JOIN users u ON l.borrower_id = u.id
-        LEFT JOIN assets a_room ON l.room_id = a_room.id
-        LEFT JOIN loan_items li ON l.id = li.loan_id
-        LEFT JOIN assets a ON li.asset_id = a.id
-        WHERE l.status = 'disetujui'
-      `;
+    // Update status loan yang terlambat
+    console.log('🔄 [ReturnController] Updating overdue loans...');
+    const updateResult = await client.query(`
+      UPDATE loans 
+      SET status = 'menunggu_pengembalian', updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'disetujui' 
+        AND end_date < CURRENT_DATE
+        AND returned_at IS NULL
+      RETURNING id
+    `);
+    
+    console.log(`🔄 [ReturnController] Updated ${updateResult.rowCount} overdue loans`);
 
-      const params = [];
+    // Ambil data loan dengan status 'disetujui' dan 'menunggu_pengembalian'
+    const sql = `
+      SELECT 
+        l.id,
+        l.borrower_id as "borrowerId",
+        u.name as "borrowerName",
+        u.email as "borrowerEmail",
+        l.room_id as "roomId",
+        a_room.name as "roomName",
+        l.start_date as "startDate",
+        l.end_date as "endDate",
+        l.start_time as "startTime",
+        l.end_time as "endTime",
+        l.status,
+        l.academic_year as "academicYear",
+        l.semester,
+        l.purpose,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', li.asset_id,
+              'name', a.name,
+              'quantity', li.quantity
+            )
+          ) FILTER (WHERE li.asset_id IS NOT NULL),
+          '[]'
+        ) as facilities,
+        -- Tandai jika sudah melewati tanggal selesai
+        CASE 
+          WHEN l.end_date < CURRENT_DATE THEN true
+          ELSE false
+        END as "isOverdue"
+      FROM loans l
+      JOIN users u ON l.borrower_id = u.id
+      LEFT JOIN assets a_room ON l.room_id = a_room.id
+      LEFT JOIN loan_items li ON l.id = li.loan_id
+      LEFT JOIN assets a ON li.asset_id = a.id
+      WHERE l.status IN ('disetujui', 'menunggu_pengembalian')
+        AND l.returned_at IS NULL
+      GROUP BY l.id, u.id, a_room.id
+      ORDER BY l.end_date ASC
+    `;
 
-      // Jika bukan admin, hanya tampilkan peminjaman user tersebut
-      if (!['staf_buf', 'admin_buf', 'kepala_buf'].includes(user.role)) {
-        sql += ` AND l.borrower_id = $1`;
-        params.push(user.id);
+    console.log('🔄 [ReturnController] Fetching pending loans...');
+    const result = await client.query(sql);
+    console.log(`✅ [ReturnController] Found ${result.rows.length} pending loans`);
+
+    await client.query('COMMIT');
+
+    return h.response({
+      status: 'success',
+      data: { 
+        loans: result.rows,
+        stats: {
+          total: result.rows.length,
+          overdue: result.rows.filter(loan => loan.isOverdue).length,
+          today: result.rows.filter(loan => {
+            const today = new Date().toISOString().split('T')[0];
+            return loan.endDate === today;
+          }).length
+        }
       }
+    });
 
-      sql += ' GROUP BY l.id, u.id, a_room.id ORDER BY l.end_date ASC';
-
-      const result = await query(sql, params);
-
-      return h.response({
-        status: 'success',
-        data: { loans: result.rows }
-      });
-
-    } catch (error) {
-      console.error('Get pending returns error:', error);
-      return h.response({
-        status: 'error',
-        message: 'Gagal mengambil data pengembalian tertunda'
-      }).code(500);
+  } catch (error) {
+    console.error('❌ [ReturnController] Error in getPendingReturns:', error);
+    console.error('❌ Error details:', error.stack);
+    
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('❌ Rollback error:', rollbackError);
+    }
+    
+    return h.response({
+      status: 'error',
+      message: 'Gagal mengambil data pengembalian tertunda: ' + error.message
+    }).code(500);
+  } finally {
+    try {
+      client.release();
+    } catch (releaseError) {
+      console.error('❌ Client release error:', releaseError);
     }
   }
+}
 
   static async getReturnHistory(request, h) {
     try {
@@ -380,6 +424,89 @@ class ReturnController {
         status: 'error',
         message: 'Gagal mengambil detail pengembalian'
       }).code(500);
+    }
+  }
+
+  static async getPendingReturns(request, h) {
+    const client = await getClient();
+    
+    try {
+      await client.query('BEGIN');
+
+      // Update status loan yang terlambat
+      await client.query(`
+        UPDATE loans 
+        SET status = 'menunggu_pengembalian', updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'disetujui' 
+          AND end_date < CURRENT_DATE
+          AND returned_at IS NULL
+      `);
+
+      // Ambil data loan dengan status 'disetujui' dan 'menunggu_pengembalian'
+      const sql = `
+        SELECT 
+          l.id,
+          l.borrower_id as "borrowerId",
+          u.name as "borrowerName",
+          u.email as "borrowerEmail",
+          l.room_id as "roomId",
+          a_room.name as "roomName",
+          l.start_date as "startDate",
+          l.end_date as "endDate",
+          l.start_time as "startTime",
+          l.end_time as "endTime",
+          l.status,
+          l.academic_year as "academicYear",
+          l.semester,
+          l.purpose,
+          COALESCE(
+            (SELECT json_agg(json_build_object('id', li.asset_id, 'name', a.name, 'quantity', li.quantity))
+             FROM loan_items li
+             JOIN assets a ON li.asset_id = a.id
+             WHERE li.loan_id = l.id),
+            '[]'
+          ) as facilities,
+          -- Tandai jika sudah melewati tanggal selesai
+          CASE 
+            WHEN l.end_date < CURRENT_DATE THEN true
+            ELSE false
+          END as "isOverdue"
+        FROM loans l
+        JOIN users u ON l.borrower_id = u.id
+        LEFT JOIN assets a_room ON l.room_id = a_room.id
+        WHERE l.status IN ('disetujui', 'menunggu_pengembalian')
+          AND l.returned_at IS NULL
+        ORDER BY l.end_date ASC
+      `;
+
+      const result = await client.query(sql);
+
+      await client.query('COMMIT');
+
+      return h.response({
+        status: 'success',
+        data: { 
+          loans: result.rows,
+          stats: {
+            total: result.rows.length,
+            overdue: result.rows.filter(loan => loan.isOverdue).length,
+            today: result.rows.filter(loan => {
+              const today = new Date().toISOString().split('T')[0];
+              return loan.endDate === today;
+            }).length
+          }
+        }
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Get pending returns error:', error.message, error.stack);
+      return h.response({
+        status: 'error',
+        message: 'Gagal mengambil data pengembalian tertunda: ' + error.message
+      }).code(500);
+    } finally {
+      client.release();
     }
   }
 }

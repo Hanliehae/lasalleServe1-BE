@@ -1,4 +1,4 @@
-// routes/loansRoutes.js
+// routes/loansRoutes.js - PERBAIKI
 const Joi = require('joi');
 const LoanController = require('../controllers/loanController');
 const { checkRole } = require('../middleware/auth');
@@ -7,6 +7,16 @@ const loanRoutes = [
   {
     method: 'GET',
     path: '/api/loans',
+    options: {
+      validate: {
+        query: Joi.object({
+          search: Joi.string().allow(''),
+          status: Joi.string().valid('menunggu', 'disetujui', 'ditolak', 'selesai', 'menunggu_pengembalian', 'all').default('all'),
+          academicYear: Joi.string().allow(''),
+          semester: Joi.string().valid('ganjil', 'genap', 'all').default('all')
+        })
+      }
+    },
     handler: LoanController.getLoans
   },
   {
@@ -46,7 +56,8 @@ const loanRoutes = [
       pre: [{ method: checkRole(['staf_buf', 'admin_buf']) }],
       validate: {
         payload: Joi.object({
-          status: Joi.string().valid('disetujui', 'ditolak').required()
+          status: Joi.string().valid('disetujui', 'ditolak', 'menunggu_pengembalian', 'selesai').required(),
+          notes: Joi.string().allow('').optional()
         })
       }
     },

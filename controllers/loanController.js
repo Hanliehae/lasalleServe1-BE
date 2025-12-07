@@ -212,117 +212,146 @@ class LoanController {
     }
   }
 
-  static async updateLoanStatus(request, h) {
-    const client = await getClient();
-    
-    try {
-      await client.query('BEGIN');
+ // controllers/loanController.js - PERBAIKI bagian updateLoanStatus
+static async updateLoanStatus(request, h) {
+  const client = await getClient();
+  
+  try {
+    await client.query('BEGIN');
 
-      const { id } = request.params;
-      const { status, notes } = request.payload;
-      const user = request.auth.credentials.user;
+    const { id } = request.params;
+    const { status, notes = '' } = request.payload;
+    const user = request.auth.credentials.user;
 
-      // Get current loan status
-      const currentLoan = await client.query(
-        'SELECT status, borrower_id FROM loans WHERE id = $1',
+    // Get current loan status
+    const currentLoan = await client.query(
+      'SELECT status, borrower_id FROM loans WHERE id = $1',
+      [id]
+    );
+
+    if (currentLoan.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return h.response({
+        status: 'error',
+        message: 'Peminjaman tidak ditemukan'
+      }).code(404);
+    }
+
+    const currentStatus = currentLoan.rows[0].status;
+
+    // Hanya admin/staff yang bisa approve/reject
+    if (!['staf_buf', 'admin_buf'].includes(user.role)) {
+      await client.query('ROLLBACK');
+      return h.response({
+        status: 'error',
+        message: 'Tidak memiliki izin untuk mengubah status'
+      }).code(403);
+    }
+
+    // Validasi transisi status
+    const allowedTransitions = {
+      'menunggu': ['disetujui', 'ditolak'],
+      'disetujui': ['menunggu_pengembalian', 'ditolak'],
+      'menunggu_pengembalian': ['selesai'],
+      'ditolak': ['menunggu'],
+      'selesai': []
+    };
+
+    if (!allowedTransitions[currentStatus]?.includes(status)) {
+      await client.query('ROLLBACK');
+      return h.response({
+        status: 'error',
+        message: `Tidak dapat mengubah status dari ${currentStatus} ke ${status}`
+      }).code(400);
+    }
+
+    // Jika status berubah menjadi 'disetujui' dari 'menunggu', kurangi stock
+    if (status === 'disetujui' && currentStatus === 'menunggu') {
+      // Get all loan items
+      const loanItems = await client.query(
+        'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
         [id]
       );
 
-      if (currentLoan.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return h.response({
-          status: 'error',
-          message: 'Peminjaman tidak ditemukan'
-        }).code(404);
-      }
-
-      const currentStatus = currentLoan.rows[0].status;
-
-      // Hanya admin/staff yang bisa approve/reject
-      if (!['staf_buf', 'admin_buf'].includes(user.role)) {
-        await client.query('ROLLBACK');
-        return h.response({
-          status: 'error',
-          message: 'Tidak memiliki izin untuk mengubah status'
-        }).code(403);
-      }
-
-      // Validasi transisi status
-      if (currentStatus === 'selesai' || currentStatus === 'ditolak') {
-        await client.query('ROLLBACK');
-        return h.response({
-          status: 'error',
-          message: `Tidak dapat mengubah status dari ${currentStatus}`
-        }).code(400);
-      }
-
-      // Jika status berubah menjadi 'disetujui', kurangi stock
-      if (status === 'disetujui' && currentStatus === 'menunggu') {
-        // Get all loan items
-        const loanItems = await client.query(
-          'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
-          [id]
+      // Update stock untuk setiap item
+      for (const item of loanItems.rows) {
+        // Update asset_conditions untuk kondisi 'baik'
+        await client.query(
+          `UPDATE asset_conditions 
+           SET quantity = quantity - $1
+           WHERE asset_id = $2 AND condition = 'baik'`,
+          [item.quantity, item.asset_id]
         );
 
-        // Update stock untuk setiap item
-        for (const item of loanItems.rows) {
-          await client.query(
-            `UPDATE asset_conditions 
-             SET quantity = quantity - $1
-             WHERE asset_id = $2 AND condition = 'baik'`,
-            [item.quantity, item.asset_id]
-          );
-        }
-      }
-
-      // Jika status berubah menjadi 'ditolak' dari 'disetujui', kembalikan stock
-      if (status === 'ditolak' && currentStatus === 'disetujui') {
-        const loanItems = await client.query(
-          'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
-          [id]
+        // Update available_stock di assets
+        await client.query(
+          `UPDATE assets 
+           SET available_stock = available_stock - $1
+           WHERE id = $2`,
+          [item.quantity, item.asset_id]
         );
-
-        for (const item of loanItems.rows) {
-          await client.query(
-            `UPDATE asset_conditions 
-             SET quantity = quantity + $1
-             WHERE asset_id = $2 AND condition = 'baik'`,
-            [item.quantity, item.asset_id]
-          );
-        }
       }
+    }
 
-      // Update loan status
-      const result = await client.query(
-        `UPDATE loans 
-         SET status = $1, updated_at = CURRENT_TIMESTAMP, 
-             approved_by = $2, approval_notes = $3
-         WHERE id = $4
-         RETURNING id, status`,
-        [status, user.id, notes, id]
+    // Jika status berubah menjadi 'ditolak' dari 'disetujui', kembalikan stock
+    if (status === 'ditolak' && currentStatus === 'disetujui') {
+      const loanItems = await client.query(
+        'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
+        [id]
       );
 
-      await client.query('COMMIT');
+      for (const item of loanItems.rows) {
+        // Kembalikan ke asset_conditions kondisi 'baik'
+        await client.query(
+          `UPDATE asset_conditions 
+           SET quantity = quantity + $1
+           WHERE asset_id = $2 AND condition = 'baik'`,
+          [item.quantity, item.asset_id]
+        );
 
-      return h.response({
-        status: 'success',
-        message: `Status peminjaman berhasil diubah menjadi ${status}`,
-        data: {
-          loan: result.rows[0]
-        }
-      });
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Update loan status error:', error);
-      return h.response({
-        status: 'error',
-        message: 'Terjadi kesalahan server'
-      }).code(500);
-    } finally {
-      client.release();
+        // Kembalikan available_stock di assets
+        await client.query(
+          `UPDATE assets 
+           SET available_stock = available_stock + $1
+           WHERE id = $2`,
+          [item.quantity, item.asset_id]
+        );
+      }
     }
+
+    // Update loan status dengan notes - PERBAIKI QUERY INI
+    const result = await client.query(
+      `UPDATE loans 
+       SET status = $1, 
+           updated_at = CURRENT_TIMESTAMP,
+           approved_by = $2,
+           approval_notes = $3
+       WHERE id = $4
+       RETURNING id, status, updated_at`,
+      [status, user.id, notes || null, id]  // notes bisa null jika kosong
+    );
+
+    await client.query('COMMIT');
+
+    return h.response({
+      status: 'success',
+      message: `Status peminjaman berhasil diubah menjadi ${status}`,
+      data: {
+        loan: result.rows[0]
+      }
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Update loan status error:', error);
+    return h.response({
+      status: 'error',
+      message: error.message || 'Terjadi kesalahan server'
+    }).code(500);
+  } finally {
+    client.release();
   }
+}
 
   static async getLoanById(request, h) {
     try {

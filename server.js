@@ -1,6 +1,6 @@
-// server.js - PERBAIKI BAGIAN INI
+// server.js - UPDATE bagian auth strategy
 const Hapi = require('@hapi/hapi');
-const HapiJwt = require('@hapi/jwt'); // TAMBAHKAN INI
+const HapiJwt = require('@hapi/jwt');
 require('dotenv').config();
 
 const init = async () => {
@@ -24,18 +24,27 @@ const init = async () => {
     host: 'localhost',
     routes: {
       cors: {
-        origin: ['*'],
+        origin: ['http://localhost:3000', 'http://localhost:5173'], // Tambahkan frontend port
         credentials: true
+      },
+      validate: {
+        failAction: async (request, h, err) => {
+          console.error('Validation error:', err.message);
+          return h.response({
+            status: 'error',
+            message: err.message
+          }).code(400).takeover();
+        }
       }
     }
   });
 
-  // ✅ REGISTER JWT PLUGIN - FIX VERSION
+  // ✅ REGISTER JWT PLUGIN
   await server.register(HapiJwt);
 
-   // ✅ DEFINE JWT STRATEGY - SIMPLIFIED
+  // ✅ DEFINE JWT STRATEGY - SIMPLIFIED
   server.auth.strategy('jwt', 'jwt', {
-    keys: process.env.JWT_SECRET || 'fallback-secret-key-untuk-development',
+    keys: process.env.JWT_SECRET || 'lasalleserve-dev-secret-2024',
     verify: {
       aud: false,
       iss: false,
@@ -47,25 +56,13 @@ const init = async () => {
     },
     validate: async (artifacts, request, h) => {
       try {
-        const { query } = require('./config/database');
         const payload = artifacts.decoded.payload;
-        const userId = payload.id;
         
-        // Cek user di database
-        const result = await query(
-          'SELECT id, email, role, name, is_active FROM users WHERE id = $1 AND is_active = true',
-          [userId]
-        );
-
-        if (result.rows.length === 0) {
-          return { isValid: false };
-        }
-
         return {
           isValid: true,
           credentials: { 
-            user: result.rows[0],
-            scope: result.rows[0].role 
+            user: payload,
+            scope: payload.role 
           }
         };
       } catch (error) {
@@ -98,8 +95,60 @@ const init = async () => {
         message: '🚀 LasalleServe Backend API is running!',
         database: 'PostgreSQL ✅',
         timestamp: new Date().toISOString(),
-        port: PORT
+        port: PORT,
+        version: '1.0.0',
+        endpoints: {
+          auth: '/api/auth',
+          assets: '/api/assets',
+          loans: '/api/loans',
+          dashboard: '/api/dashboard',
+          reports: '/api/damage-reports',
+          returns: '/api/returns',
+          export: '/api/export',
+          upload: '/api/upload'
+        }
       };
+    }
+  });
+
+  // Test endpoint untuk debug token
+  server.route({
+    method: 'GET',
+    path: '/api/debug/token',
+    handler: (request, h) => {
+      const user = request.auth.credentials.user;
+      return {
+        status: 'success',
+        data: {
+          user: user,
+          headers: request.headers,
+          auth: request.auth
+        }
+      };
+    }
+  });
+
+  // Test endpoint untuk assets dengan debug
+  server.route({
+    method: 'GET',
+    path: '/api/debug/assets',
+    handler: async (request, h) => {
+      const { query } = require('./config/database');
+      try {
+        const result = await query('SELECT * FROM assets LIMIT 5');
+        return {
+          status: 'success',
+          data: {
+            count: result.rows.length,
+            assets: result.rows
+          }
+        };
+      } catch (error) {
+        return {
+          status: 'error',
+          message: error.message
+        };
+      }
     }
   });
 
@@ -113,14 +162,26 @@ const init = async () => {
       
       try {
         const result = await query('SELECT NOW() as current_time');
+        
+        // Cek semua tabel
+        const tables = await query(`
+          SELECT table_name, 
+                 (SELECT COUNT(*) FROM information_schema.columns WHERE table_name = t.table_name) as column_count
+          FROM information_schema.tables t
+          WHERE t.table_schema = 'public'
+          ORDER BY table_name
+        `);
+        
         return {
           status: 'success',
           message: '✅ LasalleServe Server is healthy',
           database: {
             status: 'connected ✅',
-            current_time: result.rows[0].current_time
+            current_time: result.rows[0].current_time,
+            tables: tables.rows
           },
-          server_time: new Date().toISOString()
+          server_time: new Date().toISOString(),
+          environment: process.env.NODE_ENV || 'development'
         };
       } catch (error) {
         return {
@@ -137,11 +198,15 @@ const init = async () => {
     console.log('\n🎉 LASALLESERVE BACKEND BERHASIL DIJALANKAN!');
     console.log('📍 Server URL:', server.info.uri);
     console.log('\n📚 Endpoints yang tersedia:');
-    console.log('   ✅ GET  /          - Main API');
-    console.log('   ✅ GET  /health    - Health check');
-    console.log('   ✅ POST /api/auth/register - Register user');
-    console.log('   ✅ POST /api/auth/login    - Login user');
-    console.log('   ✅ GET  /api/assets        - Get assets');
+    console.log('   ✅ GET  /                    - Main API');
+    console.log('   ✅ GET  /health              - Health check');
+    console.log('   ✅ GET  /api/debug/token     - Debug token');
+    console.log('   ✅ GET  /api/debug/assets    - Debug assets');
+    console.log('   ✅ POST /api/auth/register   - Register user');
+    console.log('   ✅ POST /api/auth/login      - Login user');
+    console.log('   ✅ GET  /api/assets          - Get assets');
+    console.log('   ✅ POST /api/assets          - Create asset');
+    console.log('\n🔑 Token testing user: admin@buf.ac.id');
     
   } catch (error) {
     console.error('❌ Gagal menjalankan server:', error);

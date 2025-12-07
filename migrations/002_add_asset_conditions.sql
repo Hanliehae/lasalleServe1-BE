@@ -1,12 +1,9 @@
--- FIX SCHEMA CONSISTENCY
--- Pastikan semua tabel memiliki academic_year dan semester
+-- File baru: migrations/002_add_asset_conditions.sql
 
--- 1. Assets table
-ALTER TABLE assets 
-ADD COLUMN IF NOT EXISTS academic_year VARCHAR(9),
-ADD COLUMN IF NOT EXISTS semester VARCHAR(10) CHECK (semester IN ('Ganjil', 'Genap'));
+-- Hapus kolom condition dari assets
+ALTER TABLE assets DROP COLUMN IF EXISTS condition;
 
--- 2. Asset conditions table
+-- Tambah tabel asset_conditions
 CREATE TABLE IF NOT EXISTS asset_conditions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     asset_id UUID REFERENCES assets(id) ON DELETE CASCADE,
@@ -17,65 +14,53 @@ CREATE TABLE IF NOT EXISTS asset_conditions (
     UNIQUE(asset_id, condition)
 );
 
--- 3. Update loans table
-ALTER TABLE loans 
-ALTER COLUMN semester TYPE VARCHAR(10),
-ADD CONSTRAINT semester_check CHECK (semester IN ('Ganjil', 'Genap'));
+-- Trigger untuk update timestamp
+CREATE TRIGGER update_asset_conditions_updated_at 
+    BEFORE UPDATE ON asset_conditions 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- 4. Update damage_reports table
-ALTER TABLE damage_reports 
-ADD COLUMN IF NOT EXISTS academic_year VARCHAR(9),
-ADD COLUMN IF NOT EXISTS semester VARCHAR(10) CHECK (semester IN ('Ganjil', 'Genap'));
-
--- 5. Function untuk menghitung stock otomatis
-CREATE OR REPLACE FUNCTION update_asset_stocks()
+-- Function untuk menghitung total dan available stock
+CREATE OR REPLACE FUNCTION update_asset_stock()
 RETURNS TRIGGER AS $$
 BEGIN
-    UPDATE assets a
-    SET 
-        total_stock = (
-            SELECT COALESCE(SUM(ac.quantity), 0)
-            FROM asset_conditions ac
-            WHERE ac.asset_id = a.id
-        ),
-        available_stock = (
-            SELECT COALESCE(SUM(ac.quantity), 0)
-            FROM asset_conditions ac
-            WHERE ac.asset_id = a.id AND ac.condition = 'baik'
-        )
-    WHERE a.id = COALESCE(NEW.asset_id, OLD.asset_id);
+    -- Update total_stock (jumlah semua kondisi)
+    UPDATE assets 
+    SET total_stock = (
+        SELECT COALESCE(SUM(quantity), 0) 
+        FROM asset_conditions 
+        WHERE asset_id = NEW.asset_id
+    ),
+    available_stock = (
+        SELECT COALESCE(quantity, 0)
+        FROM asset_conditions 
+        WHERE asset_id = NEW.asset_id AND condition = 'baik'
+    )
+    WHERE id = NEW.asset_id;
     
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- 6. Trigger untuk asset_conditions
-DROP TRIGGER IF EXISTS update_stock_on_condition_change ON asset_conditions;
+-- Trigger untuk update stock otomatis
 CREATE TRIGGER update_stock_on_condition_change
     AFTER INSERT OR UPDATE OR DELETE ON asset_conditions
-    FOR EACH ROW EXECUTE FUNCTION update_asset_stocks();
+    FOR EACH ROW EXECUTE FUNCTION update_asset_stock();
 
--- 7. Migrate existing data
+-- Pindahkan data existing
 DO $$
 DECLARE
     asset_record RECORD;
 BEGIN
-    -- Pindahkan data condition ke asset_conditions
-    FOR asset_record IN SELECT * FROM assets WHERE condition IS NOT NULL LOOP
+    FOR asset_record IN SELECT * FROM assets LOOP
         INSERT INTO asset_conditions (asset_id, condition, quantity)
-        VALUES (asset_record.id, asset_record.condition, asset_record.total_stock)
-        ON CONFLICT (asset_id, condition) DO NOTHING;
+        VALUES (asset_record.id, 'baik', asset_record.available_stock);
+        
+        IF asset_record.total_stock > asset_record.available_stock THEN
+            INSERT INTO asset_conditions (asset_id, condition, quantity)
+            VALUES (asset_record.id, 'rusak_ringan', 
+                   asset_record.total_stock - asset_record.available_stock);
+        END IF;
     END LOOP;
-    
-    RAISE NOTICE '✅ Data migration completed!';
 END $$;
 
--- 8. Hapus kolom condition lama dari assets
-ALTER TABLE assets DROP COLUMN IF EXISTS condition;
-
--- 9. Create index untuk performance
-CREATE INDEX IF NOT EXISTS idx_loans_returned ON loans(returned_at);
-CREATE INDEX IF NOT EXISTS idx_asset_conditions_asset ON asset_conditions(asset_id);
-CREATE INDEX IF NOT EXISTS idx_loans_academic_year ON loans(academic_year, semester);
-
-RAISE NOTICE '🎉 Database schema updated successfully!';
+RAISE NOTICE '✅ Asset conditions migration completed!';

@@ -4,7 +4,7 @@ const { getAcademicYear, getSemesterFromDate } = require('../utils/academicYear'
 class LoanController {
   static async getLoans(request, h) {
     try {
-      const { search, status } = request.query;
+      const { search, status, academicYear, semester } = request.query;
       const user = request.auth.credentials.user;
 
       let sql = `
@@ -12,6 +12,7 @@ class LoanController {
           l.id,
           l.borrower_id as "borrowerId",
           u.name as "borrowerName",
+          u.email as "borrowerEmail",
           l.room_id as "roomId",
           a_room.name as "roomName",
           l.purpose,
@@ -23,17 +24,31 @@ class LoanController {
           l.academic_year as "academicYear",
           l.semester,
           l.returned_at as "returnedAt",
+          l.return_notes as "returnNotes",
           l.created_at as "createdAt",
-          l.updated_at as "updatedAt"
+          l.updated_at as "updatedAt",
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', li.asset_id,
+                'name', a.name,
+                'quantity', li.quantity
+              )
+            ) FILTER (WHERE li.asset_id IS NOT NULL),
+            '[]'
+          ) as facilities
         FROM loans l
         INNER JOIN users u ON l.borrower_id = u.id
         LEFT JOIN assets a_room ON l.room_id = a_room.id
+        LEFT JOIN loan_items li ON l.id = li.loan_id
+        LEFT JOIN assets a ON li.asset_id = a.id
         WHERE 1=1
       `;
+      
       const params = [];
       let paramCount = 0;
 
-      // Jika bukan admin, hanya tampilkan peminjaman user tersebut
+      // Filter berdasarkan role
       if (!['staf_buf', 'admin_buf', 'kepala_buf'].includes(user.role)) {
         paramCount++;
         sql += ` AND l.borrower_id = $${paramCount}`;
@@ -52,34 +67,25 @@ class LoanController {
         params.push(status);
       }
 
-      sql += ' ORDER BY l.created_at DESC';
+      if (academicYear) {
+        paramCount++;
+        sql += ` AND l.academic_year = $${paramCount}`;
+        params.push(academicYear);
+      }
+
+      if (semester && semester !== 'all') {
+        paramCount++;
+        sql += ` AND l.semester = $${paramCount}`;
+        params.push(semester);
+      }
+
+      sql += ' GROUP BY l.id, u.id, a_room.id ORDER BY l.created_at DESC';
 
       const result = await query(sql, params);
 
-      // Untuk setiap loan, ambil facilities (loan_items)
-      const loans = await Promise.all(
-        result.rows.map(async (loan) => {
-          const facilitiesResult = await query(
-            `SELECT 
-              li.asset_id as "id",
-              a.name,
-              li.quantity
-             FROM loan_items li
-             INNER JOIN assets a ON li.asset_id = a.id
-             WHERE li.loan_id = $1`,
-            [loan.id]
-          );
-
-          return {
-            ...loan,
-            facilities: facilitiesResult.rows
-          };
-        })
-      );
-
       return h.response({
         status: 'success',
-        data: { loans }
+        data: { loans: result.rows }
       });
     } catch (error) {
       console.error('Get loans error:', error);
@@ -87,6 +93,234 @@ class LoanController {
         status: 'error',
         message: 'Terjadi kesalahan server'
       }).code(500);
+    }
+  }
+
+  static async createLoan(request, h) {
+    const client = await getClient();
+    
+    try {
+      await client.query('BEGIN');
+
+      const {
+        roomId,
+        facilities = [],
+        startDate,
+        endDate,
+        startTime = '08:00',
+        endTime = '17:00',
+        purpose,
+        academicYear,
+        semester
+      } = request.payload;
+
+      const borrowerId = request.auth.credentials.user.id;
+
+      // Validasi: minimal ada ruangan ATAU fasilitas
+      if (!roomId && facilities.length === 0) {
+        throw new Error('Harus memilih ruangan atau minimal satu fasilitas');
+      }
+
+      // Validasi tanggal
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      
+      if (end < start) {
+        throw new Error('Tanggal selesai tidak boleh sebelum tanggal mulai');
+      }
+
+      // Gunakan academicYear dari payload atau generate otomatis
+      const finalAcademicYear = academicYear || getAcademicYear(start);
+      const finalSemester = semester || getSemesterFromDate(start);
+
+      // 1. Insert loan
+      const loanResult = await client.query(
+        `INSERT INTO loans (borrower_id, room_id, purpose, start_date, end_date, 
+                          start_time, end_time, status, academic_year, semester)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [borrowerId, roomId || null, purpose, startDate, endDate, 
+         startTime, endTime, 'menunggu', finalAcademicYear, finalSemester]
+      );
+
+      const loanId = loanResult.rows[0].id;
+
+      // 2. Process facilities jika ada
+      for (const facility of facilities) {
+        // Check stock availability
+        const stockResult = await client.query(
+          `SELECT a.name, a.available_stock as "availableStock"
+           FROM assets a
+           WHERE a.id = $1 AND a.category = 'fasilitas'`,
+          [facility.id]
+        );
+
+        if (stockResult.rows.length === 0) {
+          throw new Error(`Fasilitas dengan ID ${facility.id} tidak ditemukan`);
+        }
+
+        const availableStock = stockResult.rows[0].availableStock;
+        if (availableStock < facility.quantity) {
+          throw new Error(`Stok ${stockResult.rows[0].name} tidak mencukupi. Tersedia: ${availableStock}, Diminta: ${facility.quantity}`);
+        }
+
+        // Insert loan item
+        await client.query(
+          'INSERT INTO loan_items (loan_id, asset_id, quantity) VALUES ($1, $2, $3)',
+          [loanId, facility.id, facility.quantity]
+        );
+
+        // Update stock (akan dikurangi saat disetujui, bukan sekarang)
+        // Stok akan dikurangi di updateLoanStatus ketika status berubah menjadi 'disetujui'
+      }
+
+      // 3. Get complete loan data
+      const completeLoan = await client.query(
+        `SELECT l.*, 
+          json_agg(DISTINCT jsonb_build_object(
+            'id', li.asset_id,
+            'name', a.name,
+            'quantity', li.quantity
+          )) as facilities
+         FROM loans l
+         LEFT JOIN loan_items li ON l.id = li.loan_id
+         LEFT JOIN assets a ON li.asset_id = a.id
+         WHERE l.id = $1
+         GROUP BY l.id`,
+        [loanId]
+      );
+
+      await client.query('COMMIT');
+
+      return h.response({
+        status: 'success',
+        message: 'Peminjaman berhasil diajukan',
+        data: {
+          loan: completeLoan.rows[0]
+        }
+      }).code(201);
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Create loan error:', error);
+      return h.response({
+        status: 'error',
+        message: error.message
+      }).code(400);
+    } finally {
+      client.release();
+    }
+  }
+
+  static async updateLoanStatus(request, h) {
+    const client = await getClient();
+    
+    try {
+      await client.query('BEGIN');
+
+      const { id } = request.params;
+      const { status, notes } = request.payload;
+      const user = request.auth.credentials.user;
+
+      // Get current loan status
+      const currentLoan = await client.query(
+        'SELECT status, borrower_id FROM loans WHERE id = $1',
+        [id]
+      );
+
+      if (currentLoan.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return h.response({
+          status: 'error',
+          message: 'Peminjaman tidak ditemukan'
+        }).code(404);
+      }
+
+      const currentStatus = currentLoan.rows[0].status;
+
+      // Hanya admin/staff yang bisa approve/reject
+      if (!['staf_buf', 'admin_buf'].includes(user.role)) {
+        await client.query('ROLLBACK');
+        return h.response({
+          status: 'error',
+          message: 'Tidak memiliki izin untuk mengubah status'
+        }).code(403);
+      }
+
+      // Validasi transisi status
+      if (currentStatus === 'selesai' || currentStatus === 'ditolak') {
+        await client.query('ROLLBACK');
+        return h.response({
+          status: 'error',
+          message: `Tidak dapat mengubah status dari ${currentStatus}`
+        }).code(400);
+      }
+
+      // Jika status berubah menjadi 'disetujui', kurangi stock
+      if (status === 'disetujui' && currentStatus === 'menunggu') {
+        // Get all loan items
+        const loanItems = await client.query(
+          'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
+          [id]
+        );
+
+        // Update stock untuk setiap item
+        for (const item of loanItems.rows) {
+          await client.query(
+            `UPDATE asset_conditions 
+             SET quantity = quantity - $1
+             WHERE asset_id = $2 AND condition = 'baik'`,
+            [item.quantity, item.asset_id]
+          );
+        }
+      }
+
+      // Jika status berubah menjadi 'ditolak' dari 'disetujui', kembalikan stock
+      if (status === 'ditolak' && currentStatus === 'disetujui') {
+        const loanItems = await client.query(
+          'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
+          [id]
+        );
+
+        for (const item of loanItems.rows) {
+          await client.query(
+            `UPDATE asset_conditions 
+             SET quantity = quantity + $1
+             WHERE asset_id = $2 AND condition = 'baik'`,
+            [item.quantity, item.asset_id]
+          );
+        }
+      }
+
+      // Update loan status
+      const result = await client.query(
+        `UPDATE loans 
+         SET status = $1, updated_at = CURRENT_TIMESTAMP, 
+             approved_by = $2, approval_notes = $3
+         WHERE id = $4
+         RETURNING id, status`,
+        [status, user.id, notes, id]
+      );
+
+      await client.query('COMMIT');
+
+      return h.response({
+        status: 'success',
+        message: `Status peminjaman berhasil diubah menjadi ${status}`,
+        data: {
+          loan: result.rows[0]
+        }
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Update loan status error:', error);
+      return h.response({
+        status: 'error',
+        message: 'Terjadi kesalahan server'
+      }).code(500);
+    } finally {
+      client.release();
     }
   }
 
@@ -111,13 +345,27 @@ class LoanController {
           l.academic_year as "academicYear",
           l.semester,
           l.returned_at as "returnedAt",
+          l.return_notes as "returnNotes",
           l.created_at as "createdAt",
-          l.updated_at as "updatedAt"
+          l.updated_at as "updatedAt",
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', li.asset_id,
+                'name', a.name,
+                'quantity', li.quantity
+              )
+            ) FILTER (WHERE li.asset_id IS NOT NULL),
+            '[]'
+          ) as facilities
         FROM loans l
         INNER JOIN users u ON l.borrower_id = u.id
         LEFT JOIN assets a_room ON l.room_id = a_room.id
+        LEFT JOIN loan_items li ON l.id = li.loan_id
+        LEFT JOIN assets a ON li.asset_id = a.id
         WHERE l.id = $1
       `;
+
       const params = [id];
 
       // Jika bukan admin, pastikan hanya peminjaman user tersebut
@@ -125,6 +373,8 @@ class LoanController {
         sql += ` AND l.borrower_id = $2`;
         params.push(user.id);
       }
+
+      sql += ' GROUP BY l.id, u.id, a_room.id';
 
       const result = await query(sql, params);
 
@@ -135,26 +385,13 @@ class LoanController {
         }).code(404);
       }
 
-      const loan = result.rows[0];
-
-      // Ambil facilities
-      const facilitiesResult = await query(
-        `SELECT 
-          li.asset_id as "id",
-          a.name,
-          li.quantity
-         FROM loan_items li
-         INNER JOIN assets a ON li.asset_id = a.id
-         WHERE li.loan_id = $1`,
-        [loan.id]
-      );
-
-      loan.facilities = facilitiesResult.rows;
-
       return h.response({
         status: 'success',
-        data: { loan }
+        data: {
+          loan: result.rows[0]
+        }
       });
+
     } catch (error) {
       console.error('Get loan by id error:', error);
       return h.response({
@@ -164,176 +401,85 @@ class LoanController {
     }
   }
 
-
- static async createLoan(request, h) {
-    let client;
+  static async deleteLoan(request, h) {
+    const client = await getClient();
+    
     try {
-      client = await getClient(); // SEKARANG HARUSNYA BERFUNGSI
       await client.query('BEGIN');
 
-      const {
-        roomId,
-        facilities,
-        startDate,
-        endDate,
-        startTime,
-        endTime,
-        purpose,
-        academicYear,
-        semester
-      } = request.payload;
+      const { id } = request.params;
+      const user = request.auth.credentials.user;
 
-      const borrowerId = request.auth.credentials.user.id;
-
-      console.log('🔐 Create Loan - User:', borrowerId);
-      console.log('📦 Payload facilities:', facilities);
-
-      // Validasi required fields
-      if (!facilities || facilities.length === 0) {
-        throw new Error('Minimal satu fasilitas harus dipilih');
-      }
-
-      // Validasi asset ID
-      for (const facility of facilities) {
-        if (!facility.id || facility.id === '{{assetId}}') {
-          throw new Error('Asset ID tidak valid. Pastikan menggunakan ID yang benar tanpa {{}}');
-        }
-      }
-
-      // Gunakan academicYear dari payload atau generate otomatis
-      const finalAcademicYear = academicYear || getAcademicYear();
-      const finalSemester = semester || getSemesterFromDate();
-
-      // Insert loan
+      // Get loan data
       const loanResult = await client.query(
-        `INSERT INTO loans (borrower_id, room_id, purpose, start_date, end_date, start_time, end_time, status, academic_year, semester)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id`,
-        [borrowerId, roomId, purpose, startDate, endDate, startTime, endTime, 'menunggu', finalAcademicYear, finalSemester]
+        'SELECT borrower_id, status FROM loans WHERE id = $1',
+        [id]
       );
 
-      const loanId = loanResult.rows[0].id;
-      console.log('✅ Loan created with ID:', loanId);
-
-      // Process facilities
-      for (const facility of facilities) {
-        console.log(`🔄 Processing facility: ${facility.id}`);
-        
-        // Check if asset exists and has enough stock
-        const assetResult = await client.query(
-          'SELECT name, available_stock FROM assets WHERE id = $1',
-          [facility.id]
-        );
-
-        if (assetResult.rows.length === 0) {
-          throw new Error(`Asset dengan ID ${facility.id} tidak ditemukan`);
-        }
-
-        const asset = assetResult.rows[0];
-        if (asset.available_stock < facility.quantity) {
-          throw new Error(`Stok ${asset.name} tidak mencukupi. Tersedia: ${asset.available_stock}, Diminta: ${facility.quantity}`);
-        }
-
-        // Insert loan item
-        await client.query(
-          'INSERT INTO loan_items (loan_id, asset_id, quantity) VALUES ($1, $2, $3)',
-          [loanId, facility.id, facility.quantity]
-        );
-
-        // Update stock
-        await client.query(
-          'UPDATE assets SET available_stock = available_stock - $1 WHERE id = $2',
-          [facility.quantity, facility.id]
-        );
-
-        console.log(`✅ Facility ${asset.name} added to loan`);
+      if (loanResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return h.response({
+          status: 'error',
+          message: 'Peminjaman tidak ditemukan'
+        }).code(404);
       }
+
+      const loan = loanResult.rows[0];
+
+      // Hanya admin atau pemilik yang bisa menghapus (jika status masih menunggu)
+      const canDelete = ['staf_buf', 'admin_buf'].includes(user.role) || 
+                       (loan.borrower_id === user.id && loan.status === 'menunggu');
+
+      if (!canDelete) {
+        await client.query('ROLLBACK');
+        return h.response({
+          status: 'error',
+          message: 'Tidak memiliki izin untuk menghapus peminjaman ini'
+        }).code(403);
+      }
+
+      // Jika status disetujui, kembalikan stock terlebih dahulu
+      if (loan.status === 'disetujui') {
+        const loanItems = await client.query(
+          'SELECT asset_id, quantity FROM loan_items WHERE loan_id = $1',
+          [id]
+        );
+
+        for (const item of loanItems.rows) {
+          await client.query(
+            `UPDATE asset_conditions 
+             SET quantity = quantity + $1
+             WHERE asset_id = $2 AND condition = 'baik'`,
+            [item.quantity, item.asset_id]
+          );
+        }
+      }
+
+      // Delete loan items first (cascade)
+      await client.query('DELETE FROM loan_items WHERE loan_id = $1', [id]);
+
+      // Delete loan
+      const deleteResult = await client.query(
+        'DELETE FROM loans WHERE id = $1 RETURNING id',
+        [id]
+      );
 
       await client.query('COMMIT');
 
       return h.response({
         status: 'success',
-        data: {
-          loan: {
-            id: loanId,
-            message: 'Peminjaman berhasil dibuat'
-          }
-        }
-      }).code(201);
-
-    } catch (error) {
-      if (client) await client.query('ROLLBACK');
-      console.error('❌ Create loan error:', error);
-      return h.response({
-        status: 'error',
-        message: error.message
-      }).code(500);
-    } finally {
-      if (client) client.release();
-    }
-  }
-
-
-  static async updateLoanStatus(request, h) {
-    try {
-      const { id } = request.params;
-      const { status } = request.payload;
-
-      const result = await query(
-        'UPDATE loans SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id',
-        [status, id]
-      );
-
-      if (result.rows.length === 0) {
-        return h.response({
-          status: 'error',
-          message: 'Peminjaman tidak ditemukan'
-        }).code(404);
-      }
-
-      return h.response({
-        status: 'success',
-        message: 'Status peminjaman berhasil diupdate'
-      });
-    } catch (error) {
-      console.error('Update loan status error:', error);
-      return h.response({
-        status: 'error',
-        message: 'Terjadi kesalahan server'
-      }).code(500);
-    }
-  }
-
-static async deleteLoan(request, h) {
-    try {
-      const { id } = request.params;
-
-      console.log(`🗑️ Deleting loan: ${id}`);
-
-      const result = await query(
-        'DELETE FROM loans WHERE id = $1 RETURNING id',
-        [id]
-      );
-
-      if (result.rows.length === 0) {
-        return h.response({
-          status: 'error',
-          message: 'Peminjaman tidak ditemukan'
-        }).code(404);
-      }
-
-      console.log('✅ Loan deleted successfully');
-
-      return h.response({
-        status: 'success',
         message: 'Peminjaman berhasil dihapus'
       });
+
     } catch (error) {
-      console.error('❌ Delete loan error:', error);
+      await client.query('ROLLBACK');
+      console.error('Delete loan error:', error);
       return h.response({
         status: 'error',
         message: 'Terjadi kesalahan server'
       }).code(500);
+    } finally {
+      client.release();
     }
   }
 }

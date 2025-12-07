@@ -1,46 +1,51 @@
-// middleware/auth.js - COMPATIBLE WITH @hapi/jwt v3
-const { query } = require('../config/database');
+// middleware/auth.js
 const { verifyToken } = require('../utils/jwt');
 
-const authenticateJWT = async (artifacts, request, h) => {
+const authenticate = async (request, h) => {
   try {
-    const decoded = artifacts.decoded;
-    const userId = decoded.payload.id;
+    const authHeader = request.headers.authorization;
     
-    // Cek user di database
-    const result = await query(
-      'SELECT id, email, role, name, is_active FROM users WHERE id = $1 AND is_active = true',
-      [userId]
-    );
-
-    if (result.rows.length === 0) {
-      return { isValid: false };
+    if (!authHeader) {
+      return h.response({
+        status: 'error',
+        message: 'Token tidak ditemukan'
+      }).code(401).takeover();
     }
 
-    return {
-      isValid: true,
-      credentials: { 
-        user: result.rows[0],
-        scope: result.rows[0].role 
+    const token = authHeader.replace('Bearer ', '');
+    const decoded = verifyToken(token);
+    
+    // Tambahkan user ke credentials
+    request.auth = {
+      credentials: {
+        user: decoded,
+        scope: decoded.role
       }
     };
+
+    return h.continue;
   } catch (error) {
-    console.error('Auth error:', error);
-    return { isValid: false };
+    console.error('Auth error:', error.message);
+    return h.response({
+      status: 'error',
+      message: 'Token tidak valid'
+    }).code(401).takeover();
   }
 };
 
-const checkRole = (roles) => {
+const checkRole = (allowedRoles) => {
   return (request, h) => {
-    const userRole = request.auth.credentials.user.role;
-    if (!roles.includes(userRole)) {
+    const user = request.auth.credentials.user;
+    
+    if (!allowedRoles.includes(user.role)) {
       return h.response({
         status: 'error',
-        message: 'Unauthorized access'
-      }).code(403);
+        message: 'Anda tidak memiliki izin untuk mengakses fitur ini'
+      }).code(403).takeover();
     }
+
     return h.continue;
   };
 };
 
-module.exports = { authenticateJWT, checkRole };
+module.exports = { authenticate, checkRole };

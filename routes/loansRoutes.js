@@ -43,7 +43,8 @@ const loanRoutes = [
           endTime: Joi.string().allow(''),
           purpose: Joi.string().required(),
           academicYear: Joi.string().required(),
-          semester: Joi.string().valid('ganjil', 'genap').required()
+          semester: Joi.string().valid('ganjil', 'genap').required(),
+           attachmentUrl: Joi.string().allow(null, '')
         })
       }
     },

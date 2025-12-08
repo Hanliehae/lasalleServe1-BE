@@ -133,13 +133,24 @@ class AssetController {
         description,
         acquisitionYear,
         semester,
-        conditions
+        conditions,
+
       } = request.payload;
 
       // Validasi minimal ada satu kondisi
       if (!conditions || conditions.length === 0) {
         throw new Error('Minimal satu kondisi harus diisi');
       }
+
+         // 1. Cek apakah nama aset sudah ada
+    const existingAsset = await client.query(
+      'SELECT id FROM assets WHERE name = $1',
+      [name]
+    );
+
+    if (existingAsset.rows.length > 0) {
+      throw new Error(`Nama aset "${name}" sudah digunakan. Gunakan nama yang berbeda.`);
+    }
 
       // 1. Insert asset
       const assetResult = await client.query(
@@ -197,6 +208,14 @@ class AssetController {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('Create asset error:', error);
+
+      if (error.message.includes('assets_name_unique')) {
+      return h.response({
+        status: 'error',
+        message: error.message || 'Nama asset sudah digunakan. Gunakan nama lain.'
+      }).code(400);
+    }
+
       return h.response({
         status: 'error',
         message: error.message || 'Terjadi kesalahan server'
@@ -222,6 +241,17 @@ class AssetController {
         semester,
         conditions
       } = request.payload;
+
+// cek nama aset udah dipakai atau belum
+    const existingAsset = await client.query(
+      'SELECT id FROM assets WHERE name = $1 AND id <> $2',
+      [name, id]
+    );
+
+    if (existingAsset.rows.length > 0) {
+      throw new Error(`Nama aset "${name}" sudah digunakan. Gunakan nama yang berbeda.`);
+    }
+
 
       // 1. Update asset
       const result = await client.query(
@@ -289,6 +319,13 @@ class AssetController {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('Update asset error:', error);
+
+if (error.message.includes('assets_name_unique')) {
+      return h.response({
+        status: 'error',
+        message: error.message || 'Nama asset sudah digunakan. Gunakan nama lain.'
+      }).code(400);
+    }
       return h.response({
         status: 'error',
         message: error.message || 'Terjadi kesalahan server'

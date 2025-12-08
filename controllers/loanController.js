@@ -111,7 +111,8 @@ class LoanController {
         endTime = '17:00',
         purpose,
         academicYear,
-        semester
+        semester,
+        attachmentUrl = null
       } = request.payload;
 
       const borrowerId = request.auth.credentials.user.id;
@@ -129,6 +130,10 @@ class LoanController {
         throw new Error('Tanggal selesai tidak boleh sebelum tanggal mulai');
       }
 
+      if (roomId && endTime > '17:00' && !attachmentUrl){
+        throw new Error('Peminjaman ruangan melebihi jam operasional (17:00) wajib melampirkan surat izin.');
+      }
+    
       // Gunakan academicYear dari payload atau generate otomatis
       const finalAcademicYear = academicYear || getAcademicYear(start);
       const finalSemester = semester || getSemesterFromDate(start);
@@ -136,11 +141,11 @@ class LoanController {
       // 1. Insert loan
       const loanResult = await client.query(
         `INSERT INTO loans (borrower_id, room_id, purpose, start_date, end_date, 
-                          start_time, end_time, status, academic_year, semester)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                          start_time, end_time, status, academic_year, semester, attachment_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id`,
         [borrowerId, roomId || null, purpose, startDate, endDate, 
-         startTime, endTime, 'menunggu', finalAcademicYear, finalSemester]
+         startTime, endTime, 'menunggu', finalAcademicYear, finalSemester, attachmentUrl]
       );
 
       const loanId = loanResult.rows[0].id;

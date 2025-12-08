@@ -14,11 +14,11 @@ class UploadController {
       }
 
       // Validasi tipe file
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'application/pdf'];
       if (!allowedTypes.includes(file.hapi.headers['content-type'])) {
         return h.response({
           status: 'error',
-          message: 'Format file tidak didukung. Gunakan JPG, PNG, atau WebP'
+          message: 'Format file tidak didukung. Gunakan JPG, PNG, atau PDF'
         }).code(400);
       }
 
@@ -30,6 +30,8 @@ class UploadController {
           message: 'Ukuran file terlalu besar. Maksimal 5MB'
         }).code(400);
       }
+
+      const resourceType = contentType === 'application/pdf' ? 'raw' : 'image';
 
       // Upload ke Cloudinary
       const uploadPromise = new Promise((resolve, reject) => {
@@ -62,7 +64,8 @@ class UploadController {
           url: result.secure_url,
           publicId: result.public_id,
           format: result.format,
-          bytes: result.bytes
+          bytes: result.bytes,
+          resourceType: resourceType
         }
       }).code(201);
       

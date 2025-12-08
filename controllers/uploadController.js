@@ -38,12 +38,13 @@ class UploadController {
         const uploadStream = cloudinary.uploader.upload_stream(
           {
             folder: 'lasalleserve',
-            resource_type: 'image',
+            resource_type: 'image' && {
             transformation: [
               { width: 1200, height: 800, crop: 'limit' },
               { quality: 'auto:good' }
             ]
           },
+        },
           (error, result) => {
             if (error) {
               reject(error);
@@ -78,12 +79,15 @@ class UploadController {
     }
   }
 
-  static async deleteImage(request, h) {
+  static async deleteFile(request, h) {
     try {
       const { publicId } = request.params;
+       const { resourceType = 'image' } = request.query;
       
-      const result = await cloudinary.uploader.destroy(publicId);
-      
+     const result = await cloudinary.uploader.destroy(publicId, {
+        resource_type: resourceType
+      });
+
       return h.response({
         status: 'success',
         message: 'Gambar berhasil dihapus',
@@ -93,7 +97,7 @@ class UploadController {
       console.error('Delete image error:', error);
       return h.response({
         status: 'error',
-        message: 'Gagal menghapus gambar'
+        message: 'Gagal menghapus dokumen'
       }).code(500);
     }
   }

@@ -73,6 +73,8 @@ class ReturnController {
 
       // 4. Process each returned item
       for (const returnedItem of returnedItems) {
+        const originalItem = loanItems.find(item => item.asset_id === returnedItem.id);
+        
         // Update loan item with return condition
         await client.query(
           `UPDATE loan_items 
@@ -81,24 +83,28 @@ class ReturnController {
           [returnedItem.condition, returnedItem.quantity, loanId, returnedItem.id]
         );
 
-        // Update asset stock based on condition
+        // Update asset_conditions berdasarkan kondisi pengembalian
         if (returnedItem.condition === 'baik') {
-          // Tambah ke stock baik
+          // Tambah ke kondisi baik
           await client.query(
-            `UPDATE asset_conditions 
-             SET quantity = quantity + $1
-             WHERE asset_id = $2 AND condition = 'baik'`,
-            [returnedItem.quantity, returnedItem.id]
+            `INSERT INTO asset_conditions (asset_id, condition, quantity)
+             VALUES ($1, 'baik', $2)
+             ON CONFLICT (asset_id, condition) 
+             DO UPDATE SET quantity = asset_conditions.quantity + $2`,
+            [returnedItem.id, returnedItem.quantity]
           );
-        } else if (returnedItem.condition === 'rusak_ringan') {
-          // Kurangi dari baik, tambah ke rusak ringan
+          
+          // Update available_stock di assets
           await client.query(
-            `UPDATE asset_conditions 
-             SET quantity = quantity - $1
-             WHERE asset_id = $2 AND condition = 'baik'`,
+            `UPDATE assets 
+             SET available_stock = available_stock + $1,
+                 total_stock = total_stock + $1
+             WHERE id = $2`,
             [returnedItem.quantity, returnedItem.id]
           );
           
+        } else if (returnedItem.condition === 'rusak_ringan') {
+          // Tambah ke kondisi rusak ringan, tidak mengubah available_stock
           await client.query(
             `INSERT INTO asset_conditions (asset_id, condition, quantity)
              VALUES ($1, 'rusak_ringan', $2)
@@ -106,15 +112,17 @@ class ReturnController {
              DO UPDATE SET quantity = asset_conditions.quantity + $2`,
             [returnedItem.id, returnedItem.quantity]
           );
-        } else if (returnedItem.condition === 'rusak_berat') {
-          // Kurangi dari baik, tambah ke rusak berat
+          
+          // Update total_stock (tapi available_stock tetap)
           await client.query(
-            `UPDATE asset_conditions 
-             SET quantity = quantity - $1
-             WHERE asset_id = $2 AND condition = 'baik'`,
+            `UPDATE assets 
+             SET total_stock = total_stock + $1
+             WHERE id = $2`,
             [returnedItem.quantity, returnedItem.id]
           );
           
+        } else if (returnedItem.condition === 'rusak_berat') {
+          // Tambah ke kondisi rusak berat, tidak mengubah available_stock
           await client.query(
             `INSERT INTO asset_conditions (asset_id, condition, quantity)
              VALUES ($1, 'rusak_berat', $2)
@@ -122,22 +130,41 @@ class ReturnController {
              DO UPDATE SET quantity = asset_conditions.quantity + $2`,
             [returnedItem.id, returnedItem.quantity]
           );
-        } else if (returnedItem.condition === 'hilang') {
-          // Hanya kurangi dari baik (tidak ditambahkan ke kondisi lain)
+          
+          // Update total_stock (tapi available_stock tetap)
           await client.query(
-            `UPDATE asset_conditions 
-             SET quantity = quantity - $1
-             WHERE asset_id = $2 AND condition = 'baik'`,
+            `UPDATE assets 
+             SET total_stock = total_stock + $1
+             WHERE id = $2`,
             [returnedItem.quantity, returnedItem.id]
+          );
+          
+        } else if (returnedItem.condition === 'hilang') {
+          // Item hilang, kurangi total_stock tapi tidak ada penambahan ke kondisi lain
+          await client.query(
+            `UPDATE assets 
+             SET total_stock = total_stock - $1
+             WHERE id = $2`,
+            [returnedItem.quantity, returnedItem.id]
+          );
+          
+          // Log kerugian
+          await client.query(
+            `INSERT INTO asset_losses (asset_id, loan_id, quantity, notes)
+             VALUES ($1, $2, $3, $4)`,
+            [returnedItem.id, loanId, returnedItem.quantity, `Hilang saat peminjaman ${loanId}`]
           );
         }
       }
 
-      // 5. Update loan status to completed
+       // 5. Update loan status to completed dan catat waktu pengembalian (returned_at)
       const updateResult = await client.query(
         `UPDATE loans 
-         SET status = 'selesai', returned_at = CURRENT_TIMESTAMP, 
-             return_notes = $1, processed_by = $2
+         SET status = 'selesai', 
+             returned_at = CURRENT_TIMESTAMP, 
+             return_notes = $1, 
+             processed_by = $2,
+             updated_at = CURRENT_TIMESTAMP
          WHERE id = $3
          RETURNING id, status, returned_at as "returnedAt"`,
         [notes, user.id, loanId]
@@ -288,6 +315,8 @@ static async getPendingReturns(request, h) {
           a_room.name as "roomName",
           l.start_date as "startDate",
           l.end_date as "endDate",
+          l.start_time as "startTime",  
+          l.end_time as "endTime",     
           l.returned_at as "returnedAt",
           l.return_notes as "returnNotes",
           l.academic_year as "academicYear",

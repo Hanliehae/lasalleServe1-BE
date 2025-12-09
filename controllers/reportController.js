@@ -31,10 +31,9 @@ class ReportController {
       const params = [];
       let paramCount = 0;
 
-      // Sesuai permintaan: hanya kepala_buf yang bisa melihat semua laporan
-      // Admin dan staf hanya bisa melihat detail (tapi kita batasi query berdasarkan role)
-      if (!['kepala_buf'].includes(user.role)) {
-        // Untuk non-kepala_buf, hanya tampilkan laporan yang mereka laporkan
+      // Admin, staf, dan kepala BUF bisa melihat semua laporan
+      // User biasa hanya bisa melihat laporan mereka sendiri
+      if (!['staf_buf', 'admin_buf', 'kepala_buf'].includes(user.role)) {
         paramCount++;
         sql += ` AND dr.reported_by = $${paramCount}`;
         params.push(user.id);

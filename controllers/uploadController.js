@@ -31,20 +31,28 @@ class UploadController {
         }).code(400);
       }
 
+      // Get content type from file headers
+      const contentType = file.hapi.headers['content-type'];
       const resourceType = contentType === 'application/pdf' ? 'raw' : 'image';
+
+      // Build Cloudinary upload options based on file type
+      const uploadOptions = {
+        folder: 'lasalleserve',
+        resource_type: resourceType
+      };
+
+      // Add transformation only for images (not for PDF)
+      if (resourceType === 'image') {
+        uploadOptions.transformation = [
+          { width: 1200, height: 800, crop: 'limit' },
+          { quality: 'auto:good' }
+        ];
+      }
 
       // Upload ke Cloudinary
       const uploadPromise = new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            folder: 'lasalleserve',
-            resource_type: 'image' && {
-            transformation: [
-              { width: 1200, height: 800, crop: 'limit' },
-              { quality: 'auto:good' }
-            ]
-          },
-        },
+          uploadOptions,
           (error, result) => {
             if (error) {
               reject(error);

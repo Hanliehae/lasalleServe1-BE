@@ -79,7 +79,7 @@ class LoanController {
         params.push(semester);
       }
 
-      sql += ' GROUP BY l.id, u.id, a_room.id ORDER BY l.created_at DESC';
+      sql += ' GROUP BY l.id, u.id, a_room.id ORDER BY l.created_at ASC';
 
       const result = await query(sql, params);
 
@@ -133,6 +133,103 @@ class LoanController {
       if (roomId && endTime > '17:00' && !attachmentUrl){
         throw new Error('Peminjaman ruangan melebihi jam operasional (17:00) wajib melampirkan surat izin.');
       }
+
+      // ============================================
+      // VALIDASI DOUBLE BOOKING - Cek overlap peminjaman
+      // ============================================
+      
+      // Cek overlap untuk ruangan
+      if (roomId) {
+        const roomOverlapQuery = `
+          SELECT l.id, u.name as borrower_name, l.start_date, l.end_date, l.start_time, l.end_time
+          FROM loans l
+          INNER JOIN users u ON l.borrower_id = u.id
+          WHERE l.room_id = $1
+            AND l.status NOT IN ('ditolak', 'selesai')
+            AND (
+              -- Cek overlap tanggal
+              (l.start_date <= $3 AND l.end_date >= $2)
+            )
+            AND (
+              -- Cek overlap waktu (jika tanggal overlap)
+              (l.start_time < $5 AND l.end_time > $4)
+              OR (l.start_time >= $4 AND l.start_time < $5)
+              OR (l.end_time > $4 AND l.end_time <= $5)
+            )
+        `;
+        
+        const roomOverlap = await client.query(roomOverlapQuery, [
+          roomId, startDate, endDate, startTime, endTime
+        ]);
+
+        if (roomOverlap.rows.length > 0) {
+          const conflict = roomOverlap.rows[0];
+          const conflictStartDate = new Date(conflict.start_date).toLocaleDateString('id-ID');
+          const conflictEndDate = new Date(conflict.end_date).toLocaleDateString('id-ID');
+          throw new Error(
+            `Ruangan sudah dipinjam oleh ${conflict.borrower_name} pada ${conflictStartDate} - ${conflictEndDate} ` +
+            `pukul ${conflict.start_time} - ${conflict.end_time}. Silakan pilih waktu lain.`
+          );
+        }
+      }
+
+      // Cek overlap untuk fasilitas
+      for (const facility of facilities) {
+        const facilityOverlapQuery = `
+          SELECT 
+            l.id, 
+            u.name as borrower_name, 
+            l.start_date, 
+            l.end_date, 
+            l.start_time, 
+            l.end_time,
+            a.name as asset_name,
+            li.quantity as borrowed_quantity,
+            a.available_stock
+          FROM loans l
+          INNER JOIN users u ON l.borrower_id = u.id
+          INNER JOIN loan_items li ON l.id = li.loan_id
+          INNER JOIN assets a ON li.asset_id = a.id
+          WHERE li.asset_id = $1
+            AND l.status NOT IN ('ditolak', 'selesai')
+            AND (
+              -- Cek overlap tanggal
+              (l.start_date <= $3 AND l.end_date >= $2)
+            )
+            AND (
+              -- Cek overlap waktu
+              (l.start_time < $5 AND l.end_time > $4)
+              OR (l.start_time >= $4 AND l.start_time < $5)
+              OR (l.end_time > $4 AND l.end_time <= $5)
+            )
+        `;
+
+        const facilityOverlap = await client.query(facilityOverlapQuery, [
+          facility.id, startDate, endDate, startTime, endTime
+        ]);
+
+        if (facilityOverlap.rows.length > 0) {
+          // Hitung total yang sudah dipinjam di waktu yang overlap
+          const totalBorrowed = facilityOverlap.rows.reduce((sum, row) => sum + row.borrowed_quantity, 0);
+          const assetInfo = facilityOverlap.rows[0];
+          const availableForThisTime = assetInfo.available_stock - totalBorrowed;
+
+          if (facility.quantity > availableForThisTime) {
+            const conflict = facilityOverlap.rows[0];
+            const conflictStartDate = new Date(conflict.start_date).toLocaleDateString('id-ID');
+            const conflictEndDate = new Date(conflict.end_date).toLocaleDateString('id-ID');
+            throw new Error(
+              `${assetInfo.asset_name} tidak tersedia cukup untuk waktu tersebut. ` +
+              `Sudah dipinjam ${totalBorrowed} unit oleh peminjam lain pada ${conflictStartDate} - ${conflictEndDate} ` +
+              `pukul ${conflict.start_time} - ${conflict.end_time}. ` +
+              `Tersedia: ${availableForThisTime} unit, Diminta: ${facility.quantity} unit.`
+            );
+          }
+        }
+      }
+      // ============================================
+      // END VALIDASI DOUBLE BOOKING
+      // ============================================
     
       // Gunakan academicYear dari payload atau generate otomatis
       const finalAcademicYear = academicYear || getAcademicYear(start);

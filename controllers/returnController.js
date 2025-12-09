@@ -20,12 +20,12 @@ class ReturnController {
         }).code(403);
       }
 
-      // 1. Get loan details
+      // 1. Get loan details - terima status 'disetujui' DAN 'menunggu_pengembalian'
       const loanResult = await client.query(
         `SELECT l.*, u.name as "borrowerName"
          FROM loans l
          JOIN users u ON l.borrower_id = u.id
-         WHERE l.id = $1 AND l.status = 'disetujui'`,
+         WHERE l.id = $1 AND l.status IN ('disetujui', 'menunggu_pengembalian')`,
         [loanId]
       );
 
@@ -33,13 +33,13 @@ class ReturnController {
         await client.query('ROLLBACK');
         return h.response({
           status: 'error',
-          message: 'Peminjaman tidak ditemukan atau belum disetujui'
+          message: 'Peminjaman tidak ditemukan, belum disetujui, atau sudah dikembalikan'
         }).code(404);
       }
 
       const loan = loanResult.rows[0];
 
-      // 2. Get original loan items
+      // 2. Get original loan items (fasilitas saja, bukan ruangan)
       const loanItemsResult = await client.query(
         `SELECT li.asset_id, li.quantity, a.name
          FROM loan_items li
@@ -50,15 +50,32 @@ class ReturnController {
 
       const loanItems = loanItemsResult.rows;
 
-      // 3. Validate returned items
-      for (const returnedItem of returnedItems) {
+      // 3. Pisahkan returned items antara room dan facilities
+      const roomItems = returnedItems.filter(item => item.type === 'room');
+      const facilityItems = returnedItems.filter(item => item.type === 'facility');
+
+      // 4. Validasi ruangan (jika ada)
+      for (const roomItem of roomItems) {
+        // Ruangan di-track di loans.room_id, bukan loan_items
+        // Validasi bahwa room_id di loan sama dengan item yang dikembalikan
+        if (loan.room_id && roomItem.id !== loan.room_id) {
+          await client.query('ROLLBACK');
+          return h.response({
+            status: 'error',
+            message: `Ruangan dengan ID ${roomItem.id} tidak sesuai dengan peminjaman`
+          }).code(400);
+        }
+      }
+
+      // 5. Validasi fasilitas
+      for (const returnedItem of facilityItems) {
         const originalItem = loanItems.find(item => item.asset_id === returnedItem.id);
         
         if (!originalItem) {
           await client.query('ROLLBACK');
           return h.response({
             status: 'error',
-            message: `Item dengan ID ${returnedItem.id} tidak ditemukan dalam peminjaman`
+            message: `Fasilitas dengan ID ${returnedItem.id} tidak ditemukan dalam peminjaman`
           }).code(400);
         }
 
@@ -71,8 +88,8 @@ class ReturnController {
         }
       }
 
-      // 4. Process each returned item
-      for (const returnedItem of returnedItems) {
+      // 6. Process fasilitas yang dikembalikan (ruangan tidak perlu update stok)
+      for (const returnedItem of facilityItems) {
         const originalItem = loanItems.find(item => item.asset_id === returnedItem.id);
         
         // Update loan item with return condition
@@ -453,89 +470,6 @@ static async getPendingReturns(request, h) {
         status: 'error',
         message: 'Gagal mengambil detail pengembalian'
       }).code(500);
-    }
-  }
-
-  static async getPendingReturns(request, h) {
-    const client = await getClient();
-    
-    try {
-      await client.query('BEGIN');
-
-      // Update status loan yang terlambat
-      await client.query(`
-        UPDATE loans 
-        SET status = 'menunggu_pengembalian', updated_at = CURRENT_TIMESTAMP
-        WHERE status = 'disetujui' 
-          AND end_date < CURRENT_DATE
-          AND returned_at IS NULL
-      `);
-
-      // Ambil data loan dengan status 'disetujui' dan 'menunggu_pengembalian'
-      const sql = `
-        SELECT 
-          l.id,
-          l.borrower_id as "borrowerId",
-          u.name as "borrowerName",
-          u.email as "borrowerEmail",
-          l.room_id as "roomId",
-          a_room.name as "roomName",
-          l.start_date as "startDate",
-          l.end_date as "endDate",
-          l.start_time as "startTime",
-          l.end_time as "endTime",
-          l.status,
-          l.academic_year as "academicYear",
-          l.semester,
-          l.purpose,
-          COALESCE(
-            (SELECT json_agg(json_build_object('id', li.asset_id, 'name', a.name, 'quantity', li.quantity))
-             FROM loan_items li
-             JOIN assets a ON li.asset_id = a.id
-             WHERE li.loan_id = l.id),
-            '[]'
-          ) as facilities,
-          -- Tandai jika sudah melewati tanggal selesai
-          CASE 
-            WHEN l.end_date < CURRENT_DATE THEN true
-            ELSE false
-          END as "isOverdue"
-        FROM loans l
-        JOIN users u ON l.borrower_id = u.id
-        LEFT JOIN assets a_room ON l.room_id = a_room.id
-        WHERE l.status IN ('disetujui', 'menunggu_pengembalian')
-          AND l.returned_at IS NULL
-        ORDER BY l.end_date ASC
-      `;
-
-      const result = await client.query(sql);
-
-      await client.query('COMMIT');
-
-      return h.response({
-        status: 'success',
-        data: { 
-          loans: result.rows,
-          stats: {
-            total: result.rows.length,
-            overdue: result.rows.filter(loan => loan.isOverdue).length,
-            today: result.rows.filter(loan => {
-              const today = new Date().toISOString().split('T')[0];
-              return loan.endDate === today;
-            }).length
-          }
-        }
-      });
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Get pending returns error:', error.message, error.stack);
-      return h.response({
-        status: 'error',
-        message: 'Gagal mengambil data pengembalian tertunda: ' + error.message
-      }).code(500);
-    } finally {
-      client.release();
     }
   }
 }

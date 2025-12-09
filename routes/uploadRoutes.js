@@ -24,7 +24,7 @@ const uploadRoutes = [
     options: {
       pre: [{ method: checkRole(['admin_buf', 'kepala_buf']) }]
     },
-    handler: UploadController.deleteImage
+    handler: UploadController.deleteFile
   }
 ];
 

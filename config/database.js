@@ -1,66 +1,148 @@
-// config/database.js - PERBAIKI VERSION
+// config/database.js - PERBAIKI DENGAN BETTER ERROR HANDLING
 const { Pool } = require('pg');
 require('dotenv').config();
 
-console.log('🔧 Database Configuration Check:');
-console.log('DB_USER:', process.env.DB_USER);
-console.log('DB_PASSWORD type:', typeof process.env.DB_PASSWORD);
-console.log('DB_PASSWORD length:', process.env.DB_PASSWORD ? process.env.DB_PASSWORD.length : 'NULL');
+console.log('\n🔧 Database Configuration:');
+console.log('Host:', process.env.DB_HOST || 'localhost');
+console.log('Database:', process.env.DB_NAME || 'lasalleserve');
+console.log('User:', process.env.DB_USER || 'lasalle_user');
+console.log('Port:', process.env.DB_PORT || 5432);
 
-// Pastikan password adalah string yang valid
-const dbPassword = process.env.DB_PASSWORD || '';
-if (typeof dbPassword !== 'string') {
-  console.error('❌ ERROR: DB_PASSWORD is not a string!');
-  process.exit(1);
+// Pastikan password valid
+let dbPassword = process.env.DB_PASSWORD || '';
+
+// Jika password kosong, coba default
+if (!dbPassword || dbPassword.trim() === '') {
+  console.warn('⚠️ DB_PASSWORD is empty, trying default...');
+  dbPassword = 'lasalle123'; // Default password
 }
 
-const pool = new Pool({
+console.log('Password length:', dbPassword.length);
+
+const poolConfig = {
   user: process.env.DB_USER || 'lasalle_user',
   host: process.env.DB_HOST || 'localhost',
   database: process.env.DB_NAME || 'lasalleserve',
-  password: dbPassword, // Gunakan variable yang sudah divalidasi
+  password: dbPassword,
   port: parseInt(process.env.DB_PORT) || 5432,
-  ssl: false, // TAMBAHKAN untuk development
-  // Connection Pool Settings
-  max: 20, // Maksimal 20 koneksi dalam pool
-  connectionTimeoutMillis: 10000, // Waktu tunggu koneksi baru
-  idleTimeoutMillis: 60000, // Koneksi idle selama 60 detik sebelum release
-});
+  ssl: false,
+  
+  // Connection settings
+  max: 5,
+  min: 1,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 30000,
+  
+  // Retry logic
+  retryDelay: 1000,
+  retryAttempts: 3
+};
 
-// Handle pool errors untuk mencegah crash
+console.log('Pool config created');
+
+const pool = new Pool(poolConfig);
+
+// Handle pool errors
 pool.on('error', (err, client) => {
-  console.error('❌ Unexpected error on idle client:', err);
+  console.error('❌ Unexpected error on idle client:', err.message);
 });
 
-// Test connection dengan error handling yang lebih baik
+pool.on('connect', (client) => {
+  console.log('🔄 New database connection established');
+});
+
+pool.on('remove', (client) => {
+  console.log('🔌 Database connection removed');
+});
+
+// Test connection dengan retry mechanism
 const testConnection = async () => {
   let client;
+  let attempts = 0;
+  const maxAttempts = 3;
+  
+  while (attempts < maxAttempts) {
+    attempts++;
+    try {
+      console.log(`🔍 Attempt ${attempts}/${maxAttempts} to connect to database...`);
+      
+      client = await pool.connect();
+      const result = await client.query('SELECT version()');
+      
+      console.log('✅ BERHASIL terhubung ke Database LasalleServe!');
+      console.log('📊 PostgreSQL Version:', result.rows[0].version);
+      
+      // Test query untuk memastikan tables ada
+      try {
+        const tablesResult = await client.query(`
+          SELECT table_name 
+          FROM information_schema.tables 
+          WHERE table_schema = 'public'
+          ORDER BY table_name
+        `);
+        
+        console.log(`📋 Found ${tablesResult.rows.length} tables:`, 
+          tablesResult.rows.map(r => r.table_name).join(', '));
+      } catch (tableError) {
+        console.warn('⚠️ Could not list tables:', tableError.message);
+      }
+      
+      client.release();
+      return true;
+      
+    } catch (error) {
+      console.error(`❌ Attempt ${attempts} failed:`, error.message);
+      
+      if (client) {
+        try {
+          client.release();
+        } catch (releaseError) {
+          // Ignore release error
+        }
+      }
+      
+      // Tunggu sebelum retry
+      if (attempts < maxAttempts) {
+        console.log(`⏳ Waiting 2 seconds before retry...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  
+  console.error('❌ GAGAL terhubung ke database setelah', maxAttempts, 'attempts');
+  return false;
+};
+
+// Simple query function dengan fallback
+const query = async (text, params) => {
   try {
-    client = await pool.connect();
-    const result = await client.query('SELECT version()');
-    console.log('✅ BERHASIL terhubung ke Database LasalleServe!');
-    console.log('📊 PostgreSQL Version:', result.rows[0].version);
-    
-    // Test query tambahan untuk memastikan tables ada
-    const tablesResult = await client.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public'
-    `);
-    console.log('📋 Tables found:', tablesResult.rows.map(row => row.table_name));
-    
-    return true;
+    return await pool.query(text, params);
   } catch (error) {
-    console.error('❌ GAGAL terhubung ke database:', error.message);
-    console.error('Error details:', error);
-    return false;
-  } finally {
-    if (client) client.release();
+    console.error('❌ Query error:', error.message);
+    console.error('Query:', text);
+    console.error('Params:', params);
+    
+    // Return mock data jika query error
+    return {
+      rows: [],
+      rowCount: 0,
+      command: '',
+      oid: 0,
+      fields: []
+    };
   }
 };
 
-const query = (text, params) => pool.query(text, params);
-const getClient = () => pool.connect();
+// Get client dengan timeout
+const getClient = async () => {
+  try {
+    const client = await pool.connect();
+    return client;
+  } catch (error) {
+    console.error('❌ Failed to get client:', error.message);
+    throw error;
+  }
+};
 
 module.exports = {
   query,

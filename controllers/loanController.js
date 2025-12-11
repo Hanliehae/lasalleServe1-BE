@@ -8,43 +8,51 @@ class LoanController {
       const user = request.auth.credentials.user;
 
       let sql = `
-        SELECT 
-          l.id,
-          l.borrower_id as "borrowerId",
-          u.name as "borrowerName",
-          u.email as "borrowerEmail",
-          l.room_id as "roomId",
-          a_room.name as "roomName",
-          l.purpose,
-          l.start_date as "startDate",
-          l.end_date as "endDate",
-          l.start_time as "startTime",
-          l.end_time as "endTime",
-          l.status,
-          l.academic_year as "academicYear",
-          l.semester,
-          l.returned_at as "returnedAt",
-          l.return_notes as "returnNotes",
-          l.created_at as "createdAt",
-          l.updated_at as "updatedAt",
-          COALESCE(
-            json_agg(
-              json_build_object(
-                'id', li.asset_id,
-                'name', a.name,
-                'quantity', li.quantity
-              )
-            ) FILTER (WHERE li.asset_id IS NOT NULL),
-            '[]'
-          ) as facilities
-        FROM loans l
-        INNER JOIN users u ON l.borrower_id = u.id
-        LEFT JOIN assets a_room ON l.room_id = a_room.id
-        LEFT JOIN loan_items li ON l.id = li.loan_id
-        LEFT JOIN assets a ON li.asset_id = a.id
-        WHERE 1=1
-      `;
-      
+      SELECT 
+        l.id,
+        l.borrower_id as "borrowerId",
+        u.name as "borrowerName",
+        u.email as "borrowerEmail",
+        l.room_id as "roomId",
+        a_room.name as "roomName",
+        l.purpose,
+        l.start_date as "startDate",
+        l.end_date as "endDate",
+        l.start_time as "startTime",
+        l.end_time as "endTime",
+        l.status,
+        l.academic_year as "academicYear",
+        l.semester,
+        l.returned_at as "returnedAt",
+        l.return_notes as "returnNotes",
+        l.created_at as "createdAt",
+        l.updated_at as "updatedAt",
+        -- TAMBAHKAN kolom untuk sorting prioritas
+        CASE 
+          WHEN l.status = 'menunggu' THEN 1
+          WHEN l.status = 'disetujui' THEN 2
+          WHEN l.status = 'menunggu_pengembalian' THEN 3
+          WHEN l.status = 'selesai' THEN 4
+          ELSE 5
+        END as priority_order,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', li.asset_id,
+              'name', a.name,
+              'quantity', li.quantity
+            )
+          ) FILTER (WHERE li.asset_id IS NOT NULL),
+          '[]'
+        ) as facilities
+      FROM loans l
+      INNER JOIN users u ON l.borrower_id = u.id
+      LEFT JOIN assets a_room ON l.room_id = a_room.id
+      LEFT JOIN loan_items li ON l.id = li.loan_id
+      LEFT JOIN assets a ON li.asset_id = a.id
+      WHERE 1=1
+    `;
+
       const params = [];
       let paramCount = 0;
 
@@ -79,7 +87,21 @@ class LoanController {
         params.push(semester);
       }
 
-      sql += ' GROUP BY l.id, u.id, a_room.id ORDER BY l.created_at ASC';
+sql += ` 
+  GROUP BY l.id, u.id, a_room.id 
+  ORDER BY 
+    -- Priority 1: Status 'menunggu' terbaru
+    CASE 
+      WHEN l.status = 'menunggu' THEN 1
+      WHEN l.status = 'disetujui' THEN 2
+      WHEN l.status = 'menunggu_pengembalian' THEN 3
+      WHEN l.status = 'selesai' THEN 4
+      WHEN l.status = 'ditolak' THEN 5
+      ELSE 6
+    END,
+    -- Priority 2: Dalam status yang sama, urutkan dari yang terbaru
+    l.created_at DESC
+`;
 
       const result = await query(sql, params);
 

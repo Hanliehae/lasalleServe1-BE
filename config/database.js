@@ -23,10 +23,8 @@ const pool = new Pool({
   ssl: false, // TAMBAHKAN untuk development
   // Connection Pool Settings
   max: 20, // Maksimal 20 koneksi dalam pool
-  min: 2,  // Minimal 2 koneksi tersedia
   connectionTimeoutMillis: 10000, // Waktu tunggu koneksi baru
   idleTimeoutMillis: 60000, // Koneksi idle selama 60 detik sebelum release
-  acquireTimeoutMillis: 30000, // Waktu tunggu acquire koneksi dari pool
 });
 
 // Handle pool errors untuk mencegah crash

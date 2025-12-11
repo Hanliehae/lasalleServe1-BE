@@ -4,6 +4,8 @@ const HapiJwt = require('@hapi/jwt');
 require('dotenv').config();
 const { startCronJobs } = require('./utils/cron');
 
+
+
 const init = async () => {
   console.log('🔄 Starting LasalleServe Backend...');
   
@@ -25,7 +27,7 @@ const init = async () => {
     host: 'localhost',
     routes: {
       cors: {
-        origin: ['http://localhost:3000', 'http://localhost:5173'],
+        origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
         credentials: true
       },
       validate: {
@@ -218,18 +220,7 @@ const init = async () => {
     console.error('❌ Gagal menjalankan server:', error);
     process.exit(1);
   }
+
+
 };
 
-// Handler untuk unhandled rejections
-process.on('unhandledRejection', (err) => {
-  console.error('❌ Unhandled rejection:', err);
-  process.exit(1);
-});
-
-// Jalankan server
-init().then(server => {
-  console.log(`✅ Server berjalan di ${server.info.uri}`);
-}).catch(err => {
-  console.error('❌ Failed to start server:', err);
-  process.exit(1);
-});

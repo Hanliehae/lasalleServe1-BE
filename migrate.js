@@ -17,8 +17,18 @@ async function runMigrations() {
   try {
     console.log('🚀 Running migrations...');
     
-    // Hanya jalankan migrasi 008_final_fix.sql
-    const migrations = ['008_final_fix.sql'];
+    // Daftar semua migrasi secara berurutan
+    const migrations = [
+      '001_create_tables.sql',
+      '002_add_asset_conditions.sql',
+      '003_add_semester_to_assets.sql',
+      '004_add_approval_columns_to_loans.sql',
+      '005_add_overdue_trigger.sql',
+      '006_fix_tables.sql',
+      '007_fix_auth_and_assets.sql',
+      '008_final_fix.sql',
+   '009_add_kepala_buf.sql'  // Tambahkan migrasi baru
+    ];
     
     for (const migrationFile of migrations) {
       const filePath = path.join(__dirname, 'migrations', migrationFile);

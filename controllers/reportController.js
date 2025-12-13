@@ -80,6 +80,7 @@ class ReportController {
     try {
       const { id } = request.params;
       const user = request.auth.credentials.user;
+      
 
       let sql = `
         SELECT 
@@ -173,18 +174,42 @@ class ReportController {
   static async updateDamageReport(request, h) {
     try {
       const { id } = request.params;
-      const {
-        status,
-        priority,
-        notes
-      } = request.payload;
+      const { status, priority, notes } = request.payload;
+
+      // Build dynamic update query untuk partial update
+      const updates = [];
+      const params = [];
+      let paramCount = 0;
+
+      if (status !== undefined) {
+        paramCount++;
+        updates.push(`status = $${paramCount}`);
+        params.push(status);
+      }
+
+      if (priority !== undefined) {
+        paramCount++;
+        updates.push(`priority = $${paramCount}`);
+        params.push(priority);
+      }
+
+      if (notes !== undefined) {
+        paramCount++;
+        updates.push(`notes = $${paramCount}`);
+        params.push(notes);
+      }
+
+      updates.push('updated_at = CURRENT_TIMESTAMP');
+
+      paramCount++;
+      params.push(id);
 
       const result = await query(
         `UPDATE damage_reports 
-         SET status = $1, priority = $2, notes = $3, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $4
+         SET ${updates.join(', ')}
+         WHERE id = $${paramCount}
          RETURNING id, asset_id as "assetId", reported_by as "reportedBy", description, priority, status, photo_url as "photoUrl", notes, academic_year as "academicYear", semester, created_at as "createdAt"`,
-        [status, priority, notes, id]
+        params
       );
 
       if (result.rows.length === 0) {

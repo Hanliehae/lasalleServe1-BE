@@ -34,13 +34,13 @@ const reportRoutes = [
     method: 'PUT',
     path: '/api/damage-reports/{id}',
     options: {
-      pre: [{ method: checkRole(['kepala_buf']) }], // HANYA kepala_buf
+      pre: [{ method: checkRole(['admin_buf', 'kepala_buf']) }], // admin_buf dan kepala_buf
       validate: {
         payload: Joi.object({
-          status: Joi.string().valid('menunggu', 'dalam_perbaikan', 'selesai').required(),
-          priority: Joi.string().valid('rendah', 'sedang', 'tinggi').required(),
+          status: Joi.string().valid('menunggu', 'dalam_perbaikan', 'selesai'),
+          priority: Joi.string().valid('rendah', 'sedang', 'tinggi'),
           notes: Joi.string().allow('')
-        })
+        }).min(1) // Minimal satu field harus diisi
       }
     },
     handler: ReportController.updateDamageReport
@@ -49,7 +49,7 @@ const reportRoutes = [
     method: 'DELETE',
     path: '/api/damage-reports/{id}',
     options: {
-      pre: [{ method: checkRole(['kepala_buf']) }] // HANYA kepala_buf
+      pre: [{ method: checkRole(['admin_buf', 'kepala_buf']) }] // admin_buf dan kepala_buf
     },
     handler: ReportController.deleteDamageReport
   }

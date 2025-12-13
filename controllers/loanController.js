@@ -25,6 +25,9 @@ class LoanController {
         l.semester,
         l.returned_at as "returnedAt",
         l.return_notes as "returnNotes",
+        l.approval_notes as "approvalNotes",
+        l.approved_by as "approvedBy",
+        approver.name as "approverName",
         l.created_at as "createdAt",
         l.updated_at as "updatedAt",
         -- TAMBAHKAN kolom untuk sorting prioritas
@@ -47,6 +50,7 @@ class LoanController {
         ) as facilities
       FROM loans l
       INNER JOIN users u ON l.borrower_id = u.id
+      LEFT JOIN users approver ON l.approved_by = approver.id
       LEFT JOIN assets a_room ON l.room_id = a_room.id
       LEFT JOIN loan_items li ON l.id = li.loan_id
       LEFT JOIN assets a ON li.asset_id = a.id
@@ -88,7 +92,7 @@ class LoanController {
       }
 
 sql += ` 
-  GROUP BY l.id, u.id, a_room.id 
+  GROUP BY l.id, u.id, a_room.id, approver.id 
   ORDER BY 
     -- Priority 1: Status 'menunggu' terbaru
     CASE 

@@ -16,7 +16,11 @@ class AssetController {
           a.acquisition_year as "acquisitionYear", 
           a.semester,
           a.total_stock as "totalStock", 
-          a.available_stock as "availableStock",
+          -- Hitung availableStock dari asset_conditions.baik untuk akurasi
+          COALESCE(
+            (SELECT quantity FROM asset_conditions WHERE asset_id = a.id AND condition = 'baik'),
+            0
+          ) as "availableStock",
           a.created_at as "createdAt", 
           a.updated_at as "updatedAt",
           COALESCE(
@@ -80,7 +84,11 @@ class AssetController {
         `SELECT 
           a.id, a.name, a.category, a.location, a.description,
           a.acquisition_year as "acquisitionYear", a.semester,
-          a.total_stock as "totalStock", a.available_stock as "availableStock",
+          a.total_stock as "totalStock", 
+          COALESCE(
+            (SELECT quantity FROM asset_conditions WHERE asset_id = a.id AND condition = 'baik'),
+            0
+          ) as "availableStock",
           a.created_at as "createdAt", a.updated_at as "updatedAt",
           COALESCE(
             json_agg(

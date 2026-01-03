@@ -68,7 +68,7 @@ class LoanController {
       }
 
       if (search) {
-        paramCount++;
+        paramCount++; 
         sql += ` AND (u.name ILIKE $${paramCount} OR a_room.name ILIKE $${paramCount})`;
         params.push(`%${search}%`);
       }
@@ -211,7 +211,10 @@ sql += `
             l.end_time,
             a.name as asset_name,
             li.quantity as borrowed_quantity,
-            a.available_stock
+            COALESCE(
+              (SELECT quantity FROM asset_conditions WHERE asset_id = a.id AND condition = 'baik'),
+              0
+            ) as available_stock
           FROM loans l
           INNER JOIN users u ON l.borrower_id = u.id
           INNER JOIN loan_items li ON l.id = li.loan_id
@@ -275,9 +278,13 @@ sql += `
 
       // 2. Process facilities jika ada
       for (const facility of facilities) {
-        // Check stock availability
+        // Check stock availability - hitung dari asset_conditions.baik
         const stockResult = await client.query(
-          `SELECT a.name, a.available_stock as "availableStock"
+          `SELECT a.name, 
+            COALESCE(
+              (SELECT quantity FROM asset_conditions WHERE asset_id = a.id AND condition = 'baik'),
+              0
+            ) as "availableStock"
            FROM assets a
            WHERE a.id = $1 AND a.category = 'fasilitas'`,
           [facility.id]

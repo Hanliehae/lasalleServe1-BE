@@ -118,6 +118,61 @@ const init = async () => {
   }
 
   // ============================================
+  // STATIC FILE SERVING UNTUK LOCAL UPLOADS
+  // ============================================
+  const path = require('path');
+  const fs = require('fs');
+  
+  // Buat folder uploads jika belum ada
+  const uploadsDir = path.join(__dirname, 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log('📁 Created uploads directory:', uploadsDir);
+  }
+
+  // Route untuk serving file dari folder uploads
+  server.route({
+    method: 'GET',
+    path: '/uploads/{filename}',
+    options: { auth: false },
+    handler: async (request, h) => {
+      try {
+        const filename = request.params.filename;
+        const filePath = path.join(uploadsDir, filename);
+        
+        // Cek apakah file ada
+        if (!fs.existsSync(filePath)) {
+          return h.response({ error: 'File not found' }).code(404);
+        }
+        
+        // Baca file dan return
+        const fileBuffer = fs.readFileSync(filePath);
+        
+        // Tentukan content type
+        const ext = path.extname(filename).toLowerCase();
+        const mimeTypes = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.pdf': 'application/pdf'
+        };
+        
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        
+        return h.response(fileBuffer)
+          .header('Content-Type', contentType)
+          .header('Cache-Control', 'public, max-age=31536000');
+      } catch (error) {
+        console.error('Error serving file:', error);
+        return h.response({ error: 'Error serving file' }).code(500);
+      }
+    }
+  });
+  console.log('📂 Static file serving enabled for /uploads');
+
+  // ============================================
   // ROUTES UTAMA DENGAN ERROR HANDLING
   // ============================================
 

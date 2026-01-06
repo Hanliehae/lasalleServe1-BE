@@ -42,10 +42,25 @@ class UploadController {
         
         const contentType = file.hapi.headers['content-type'];
         const resourceType = contentType === 'application/pdf' ? 'raw' : 'image';
+        
+        // Generate unique filename dengan ekstensi
+        const timestamp = Date.now();
+        const randomStr = Math.random().toString(36).substring(7);
+        const originalFilename = file.hapi.filename;
+        const fileExtension = originalFilename.split('.').pop().toLowerCase();
+        
         const uploadOptions = {
           folder: 'lasalleserve',
           resource_type: resourceType
         };
+
+        // Untuk raw upload (PDF), tambahkan public_id dengan ekstensi dan buat public
+        if (resourceType === 'raw') {
+          uploadOptions.public_id = `doc_${timestamp}_${randomStr}.${fileExtension}`;
+          uploadOptions.use_filename = true;
+          uploadOptions.access_mode = 'public'; // Buat file bisa diakses publik
+          uploadOptions.type = 'upload'; // Pastikan type adalah upload (bukan authenticated)
+        }
 
         if (resourceType === 'image') {
           uploadOptions.transformation = [
@@ -95,8 +110,9 @@ class UploadController {
       // ============================================
       console.log('💾 Saving to local storage (fallback)...');
       
-      // Buat folder uploads jika belum ada
-      const uploadDir = path.join(__dirname, '..', '..', 'uploads');
+      // Buat folder uploads di dalam backend folder (HARUS sama dengan server.js)
+      // __dirname = controllers folder, jadi '..' = lasalleServe1-BE
+      const uploadDir = path.join(__dirname, '..', 'uploads');
       await fs.mkdir(uploadDir, { recursive: true });
       
       // Generate nama file unik

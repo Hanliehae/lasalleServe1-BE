@@ -28,6 +28,7 @@ class LoanController {
         l.approval_notes as "approvalNotes",
         l.approved_by as "approvedBy",
         approver.name as "approverName",
+        l.attachment_url as "attachmentUrl",
         l.created_at as "createdAt",
         l.updated_at as "updatedAt",
         -- TAMBAHKAN kolom untuk sorting prioritas
@@ -140,6 +141,9 @@ sql += `
         semester,
         attachmentUrl = null
       } = request.payload;
+
+      // Debug: Log attachmentUrl yang diterima
+      console.log('📎 Received attachmentUrl from payload:', attachmentUrl);
 
       const borrowerId = request.auth.credentials.user.id;
 

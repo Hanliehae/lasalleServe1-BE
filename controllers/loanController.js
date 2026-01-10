@@ -160,6 +160,20 @@ sql += `
         throw new Error('Tanggal selesai tidak boleh sebelum tanggal mulai');
       }
 
+      // Validasi: tidak bisa pinjam di waktu yang sudah lewat
+      const now = new Date();
+      const startDateTime = new Date(`${startDate}T${startTime}`);
+      
+      if (startDateTime < now) {
+        throw new Error('Tidak dapat melakukan peminjaman di waktu yang sudah lewat. Pilih tanggal dan waktu di masa depan.');
+      }
+
+      // Validasi: waktu selesai harus setelah waktu mulai
+      const endDateTime = new Date(`${endDate}T${endTime}`);
+      if (endDateTime <= startDateTime) {
+        throw new Error('Waktu selesai harus setelah waktu mulai');
+      }
+
       if (roomId && endTime > '17:00' && !attachmentUrl){
         throw new Error('Peminjaman ruangan melebihi jam operasional (17:00) wajib melampirkan surat izin.');
       }

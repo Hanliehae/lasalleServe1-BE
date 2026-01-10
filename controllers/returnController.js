@@ -218,6 +218,8 @@ static async getPendingReturns(request, h) {
     console.log('🔄 [ReturnController] Starting getPendingReturns...');
     await client.query('BEGIN');
 
+    const user = request.auth.credentials.user;
+
     // Update status loan yang terlambat
     console.log('🔄 [ReturnController] Updating overdue loans...');
     const updateResult = await client.query(`
@@ -232,7 +234,7 @@ static async getPendingReturns(request, h) {
     console.log(`🔄 [ReturnController] Updated ${updateResult.rowCount} overdue loans`);
 
     // Ambil data loan dengan status 'disetujui' dan 'menunggu_pengembalian'
-    const sql = `
+    let sql = `
       SELECT 
         l.id,
         l.borrower_id as "borrowerId",
@@ -270,12 +272,23 @@ static async getPendingReturns(request, h) {
       LEFT JOIN assets a ON li.asset_id = a.id
       WHERE l.status IN ('disetujui', 'menunggu_pengembalian')
         AND l.returned_at IS NULL
-      GROUP BY l.id, u.id, a_room.id
-      ORDER BY l.end_date ASC
     `;
 
+    const params = [];
+
+    // 🔒 AUTHORIZATION: Jika bukan admin/staf, hanya tampilkan pending returns user tersebut
+    if (!['staf_buf', 'admin_buf', 'kepala_buf'].includes(user.role)) {
+      sql += ` AND l.borrower_id = $1`;
+      params.push(user.id);
+      console.log(`🔒 [ReturnController] Filtering for user: ${user.id} (${user.role})`);
+    } else {
+      console.log(`👤 [ReturnController] Admin/Staff - showing all pending returns`);
+    }
+
+    sql += ` GROUP BY l.id, u.id, a_room.id ORDER BY l.end_date ASC`;
+
     console.log('🔄 [ReturnController] Fetching pending loans...');
-    const result = await client.query(sql);
+    const result = await client.query(sql, params);
     console.log(`✅ [ReturnController] Found ${result.rows.length} pending loans`);
 
     await client.query('COMMIT');

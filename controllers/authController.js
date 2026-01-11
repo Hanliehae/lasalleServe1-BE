@@ -34,6 +34,23 @@ class AuthController {
         }).code(400);
       }
 
+      // Check if student_id (NIM) already exists (only for mahasiswa role)
+      if (studentId && studentId.trim() !== '') {
+        console.log('🔍 Checking if NIM exists:', studentId);
+        const existingNim = await query(
+          'SELECT id FROM users WHERE student_id = $1',
+          [studentId]
+        );
+
+        if (existingNim.rows.length > 0) {
+          console.log('❌ NIM already exists:', studentId);
+          return h.response({
+            status: 'error',
+            message: 'NIM sudah terdaftar'
+          }).code(400);
+        }
+      }
+
       // Hash password
       console.log('🔐 Hashing password...');
       const hashedPassword = await bcrypt.hash(password, 10);
